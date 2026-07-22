@@ -59,10 +59,67 @@
   .bubble { opacity: 0; }
   .bubbleText { font-family: 'Courier New', monospace; font-weight: bold; fill: #4A1B0C; }
   .heart { opacity: 0; fill: #D85A30; }
+
+  #calibrationPanel {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 6px;
+    pointer-events: none;
+  }
+  #calibrationCard {
+    pointer-events: auto;
+    background: #FAECE7;
+    border: 2px solid #D85A30;
+    border-radius: 14px;
+    padding: 10px 14px 12px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+    text-align: center;
+    max-width: 200px;
+    font-family: 'Courier New', monospace;
+  }
+  #calibrationCard p {
+    margin: 0 0 8px;
+    color: #4A1B0C;
+    font-weight: bold;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  #calSlider {
+    width: 170px;
+  }
+  #calValue {
+    color: #B94A24;
+    font-size: 12px;
+    margin: 6px 0 8px;
+  }
+  #calSave {
+    background: #D2703C;
+    color: #FFF7F0;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-family: inherit;
+    font-weight: bold;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  #calSave:active { transform: scale(0.97); }
 </style>
 </head>
 <body>
 <div id="stage">
+<div id="calibrationPanel">
+  <div id="calibrationCard">
+    <p>גררי את המחוון עד שהחיה יושבת בול על שורת המשימות</p>
+    <input id="calSlider" type="range" min="15" max="180" value="46" />
+    <div id="calValue">46px</div>
+    <button id="calSave">שמור מיקום ✓</button>
+  </div>
+</div>
 <svg id="petSvg" class="pet" width="280" height="260" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
 
   <!-- shadow -->
@@ -152,7 +209,7 @@
   }
   scheduleBlink();
 
-  pet.addEventListener('click', () => {
+  function handlePetClick() {
     if (animating) return;
     animating = true;
     pet.classList.add('jump');
@@ -187,7 +244,107 @@
       eyesDefault.style.opacity = '1';
       animating = false;
     }, 600);
+  }
+
+  let dragStartX, dragStartY, isDragging = false, movedDistance = 0;
+  const DRAG_THRESHOLD = 6;
+
+  pet.addEventListener('mousedown', (e) => {
+    dragStartX = e.screenX;
+    dragStartY = e.screenY;
+    movedDistance = 0;
+    isDragging = false;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+      window.pywebview.api.start_drag();
+    }
   });
+
+  window.addEventListener('mousemove', (e) => {
+    if (dragStartX === undefined) return;
+    const dx = e.screenX - dragStartX;
+    const dy = e.screenY - dragStartY;
+    movedDistance += Math.abs(dx) + Math.abs(dy);
+    if (movedDistance > DRAG_THRESHOLD) {
+      isDragging = true;
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_move) {
+        window.pywebview.api.drag_move(dx, dy);
+      }
+      dragStartX = e.screenX;
+      dragStartY = e.screenY;
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragStartX === undefined) return;
+    if (isDragging) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
+        window.pywebview.api.drop();
+      }
+    } else {
+      handlePetClick();
+    }
+    dragStartX = undefined;
+    isDragging = false;
+  });
+
+  // --- First-run calibration mode ---
+  // The page itself asks Python (via pywebview.api, the same safe
+  // JS -> Python direction already used for open_claude/drag/drop) whether
+  // calibration is needed and what the starting margin guess is. We poll
+  // briefly for window.pywebview.api to exist since it's injected slightly
+  // after the page loads.
+  function initCalibration(state) {
+    if (!state || !state.calibrate) return;
+
+    const initialMargin = parseInt(state.margin, 10) || 46;
+    const panel = document.getElementById('calibrationPanel');
+    const slider = document.getElementById('calSlider');
+    const valueLabel = document.getElementById('calValue');
+    const saveBtn = document.getElementById('calSave');
+
+    panel.style.display = 'flex';
+    slider.value = initialMargin;
+    valueLabel.textContent = initialMargin + 'px';
+
+    function callApi(method, value) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
+        window.pywebview.api[method](value);
+      }
+    }
+
+    let throttleTimer = null;
+    slider.addEventListener('input', () => {
+      const margin = parseInt(slider.value, 10);
+      valueLabel.textContent = margin + 'px';
+      if (throttleTimer) return;
+      throttleTimer = setTimeout(() => {
+        callApi('set_calibration_margin', margin);
+        throttleTimer = null;
+      }, 40);
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const margin = parseInt(slider.value, 10);
+      callApi('finish_calibration', margin);
+      saveBtn.textContent = 'נשמר! ✓';
+      setTimeout(() => {
+        panel.style.display = 'none';
+      }, 900);
+    });
+  }
+
+  function waitForPywebviewApi(attempt) {
+    attempt = attempt || 0;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_calibration_state) {
+      window.pywebview.api.get_calibration_state().then(initCalibration).catch((e) => {
+        console.error('get_calibration_state failed', e);
+      });
+    } else if (attempt < 100) {
+      setTimeout(() => waitForPywebviewApi(attempt + 1), 50);
+    }
+  }
+
+  waitForPywebviewApi();
 </script>
 </body>
 </html>
