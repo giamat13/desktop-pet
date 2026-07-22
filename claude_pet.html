@@ -115,7 +115,7 @@
 <div id="calibrationPanel">
   <div id="calibrationCard">
     <p>גררי את המחוון עד שהחיה יושבת בול על שורת המשימות</p>
-    <input id="calSlider" type="range" min="15" max="180" value="46" />
+    <input id="calSlider" type="range" min="-80" max="180" value="46" />
     <div id="calValue">46px</div>
     <button id="calSave">שמור מיקום ✓</button>
   </div>
@@ -250,6 +250,10 @@
   const DRAG_THRESHOLD = 6;
 
   pet.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) {           // middle/right must not start a drag
+      if (e.button === 1) e.preventDefault();  // block middle-click autoscroll
+      return;
+    }
     dragStartX = e.screenX;
     dragStartY = e.screenY;
     movedDistance = 0;
@@ -287,64 +291,71 @@
     isDragging = false;
   });
 
-  // --- First-run calibration mode ---
-  // The page itself asks Python (via pywebview.api, the same safe
-  // JS -> Python direction already used for open_claude/drag/drop) whether
-  // calibration is needed and what the starting margin guess is. We poll
-  // briefly for window.pywebview.api to exist since it's injected slightly
-  // after the page loads.
-  function initCalibration(state) {
-    if (!state || !state.calibrate) return;
+  // --- Calibration / settings panel ---
+  // Shown automatically on first run, and re-openable anytime by
+  // middle-clicking the pet. Listeners are wired once here; openSettings()
+  // just seeds the slider with the current margin and reveals the panel.
+  const panel = document.getElementById('calibrationPanel');
+  const slider = document.getElementById('calSlider');
+  const valueLabel = document.getElementById('calValue');
+  const saveBtn = document.getElementById('calSave');
 
-    const initialMargin = parseInt(state.margin, 10) || 46;
-    const panel = document.getElementById('calibrationPanel');
-    const slider = document.getElementById('calSlider');
-    const valueLabel = document.getElementById('calValue');
-    const saveBtn = document.getElementById('calSave');
-
-    panel.style.display = 'flex';
-    slider.value = initialMargin;
-    valueLabel.textContent = initialMargin + 'px';
-
-    function callApi(method, value) {
-      if (window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
-        window.pywebview.api[method](value);
-      }
+  function callApi(method, value) {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
+      window.pywebview.api[method](value);
     }
-
-    let throttleTimer = null;
-    slider.addEventListener('input', () => {
-      const margin = parseInt(slider.value, 10);
-      valueLabel.textContent = margin + 'px';
-      if (throttleTimer) return;
-      throttleTimer = setTimeout(() => {
-        callApi('set_calibration_margin', margin);
-        throttleTimer = null;
-      }, 40);
-    });
-
-    saveBtn.addEventListener('click', () => {
-      const margin = parseInt(slider.value, 10);
-      callApi('finish_calibration', margin);
-      saveBtn.textContent = 'נשמר! ✓';
-      setTimeout(() => {
-        panel.style.display = 'none';
-      }, 900);
-    });
   }
 
-  function waitForPywebviewApi(attempt) {
-    attempt = attempt || 0;
+  let throttleTimer = null;
+  slider.addEventListener('input', () => {
+    const margin = parseInt(slider.value, 10);
+    valueLabel.textContent = margin + 'px';
+    if (throttleTimer) return;
+    throttleTimer = setTimeout(() => {
+      callApi('set_calibration_margin', margin);
+      throttleTimer = null;
+    }, 40);
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const margin = parseInt(slider.value, 10);
+    callApi('finish_calibration', margin);
+    saveBtn.textContent = 'נשמר! ✓';
+    setTimeout(() => {
+      saveBtn.textContent = 'שמור מיקום ✓';
+      panel.style.display = 'none';
+    }, 900);
+  });
+
+  function openSettings(margin) {
+    const m = parseInt(margin, 10) || 46;
+    slider.value = m;
+    valueLabel.textContent = m + 'px';
+    panel.style.display = 'flex';
+  }
+
+  // The page asks Python (via pywebview.api - the same safe JS -> Python
+  // direction used for open_claude/drag/drop) for the saved margin. The pet
+  // never auto-opens this panel: the taskbar height is auto-detected, and the
+  // user opens settings on demand by middle-clicking the pet.
+  function withCalibrationState(cb) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.get_calibration_state) {
-      window.pywebview.api.get_calibration_state().then(initCalibration).catch((e) => {
+      window.pywebview.api.get_calibration_state().then(cb).catch((e) => {
         console.error('get_calibration_state failed', e);
       });
-    } else if (attempt < 100) {
-      setTimeout(() => waitForPywebviewApi(attempt + 1), 50);
+      return true;
     }
+    return false;
   }
 
-  waitForPywebviewApi();
+  // Middle-click the pet -> open the settings/calibration panel.
+  pet.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    if (!withCalibrationState((state) => openSettings(state && state.margin))) {
+      openSettings(46);
+    }
+  });
 </script>
 </body>
 </html>

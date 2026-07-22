@@ -296,7 +296,12 @@ def hide_from_taskbar(title):
 
 class Api:
     def __init__(self, screen_h):
-        self.window = None
+        # NOTE: must stay underscore-prefixed. pywebview introspects every
+        # public attribute of the js_api object to expose it to JS, and would
+        # otherwise recurse forever into window.native.AccessibilityObject
+        # .Bounds.Empty... (WinForms Rectangle.Empty returns a Rectangle),
+        # hitting "maximum recursion depth exceeded" during page load.
+        self._window = None
         self.dragging = False
         self.screen_h = screen_h
 
@@ -307,10 +312,10 @@ class Api:
         self.dragging = True
 
     def drag_move(self, dx, dy):
-        if not self.dragging or not self.window:
+        if not self.dragging or not self._window:
             return
         try:
-            self.window.move(int(self.window.x + dx), int(self.window.y + dy))
+            self._window.move(int(self._window.x + dx), int(self._window.y + dy))
         except Exception as exc:
             log("drag_move error:", exc)
 
@@ -319,30 +324,30 @@ class Api:
         threading.Thread(target=self._fall, daemon=True).start()
 
     def _fall(self):
-        if not self.window:
+        if not self._window:
             return
         try:
             screen_w, screen_h = get_screen_size()
             target_y = screen_h - WIN_H - get_margin()
-            x = min(max(0, self.window.x), max(0, screen_w - WIN_W))
-            y = self.window.y
-            self.window.move(int(x), int(y))
+            x = min(max(0, self._window.x), max(0, screen_w - WIN_W))
+            y = self._window.y
+            self._window.move(int(x), int(y))
             while y < target_y - 1:
                 step = max(4, int((target_y - y) * 0.25))
                 y = min(target_y, y + step)
-                self.window.move(int(x), int(y))
+                self._window.move(int(x), int(y))
                 time.sleep(0.016)
         except Exception as exc:
             log("_fall failed:", exc)
 
     def set_calibration_margin(self, margin):
         """Live-preview: move the window as the user drags the calibration slider."""
-        if not self.window:
+        if not self._window:
             return
         try:
             margin = int(margin)
             y = self.screen_h - WIN_H - margin
-            self.window.move(int(self.window.x), int(y))
+            self._window.move(int(self._window.x), int(y))
         except Exception as exc:
             log("set_calibration_margin failed:", exc)
 
@@ -392,7 +397,7 @@ def main():
         resizable=False,
         js_api=api,
     )
-    api.window = window
+    api._window = window
 
     def _on_loaded():
         if sys.platform == "win32":

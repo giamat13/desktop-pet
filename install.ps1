@@ -23,10 +23,18 @@ $pythonDir = Split-Path $pythonExe -Parent
 $pythonwExe = Join-Path $pythonDir "pythonw.exe"
 if (-not (Test-Path $pythonwExe)) { $pythonwExe = $pythonExe }
 
-Write-Host "Installing pywebview into this interpreter..."
-& $pythonExe -m pip install --quiet --upgrade pywebview
+Write-Host "Installing dependencies (pywebview + pywin32)..."
+& $pythonExe -m pip install --quiet --upgrade -r "$PSScriptRoot\requirements.txt"
 
 $installDir = "$env:LOCALAPPDATA\ClaudePet"
+
+# Re-running this script updates an existing install. A pet already running
+# holds the OLD code, so stop it first or the copied files won't take effect
+# until the next login.
+Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
+    Where-Object { $_.CommandLine -like "*ClaudePet*pet_app.py*" } |
+    ForEach-Object { Write-Host "Stopping running Claude Pet (pid $($_.ProcessId))..."; Stop-Process -Id $_.ProcessId -Force }
+
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item -Path "$PSScriptRoot\claude_pet.html" -Destination $installDir -Force
 Copy-Item -Path "$PSScriptRoot\pet_app.py" -Destination $installDir -Force
