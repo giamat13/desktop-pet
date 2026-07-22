@@ -1,0 +1,47 @@
+# Claude Pet installer
+# Finds one consistent Python interpreter, installs pywebview into it,
+# copies the app to %LOCALAPPDATA%\ClaudePet, registers it to run at
+# every login, and starts it immediately.
+
+$ErrorActionPreference = "Stop"
+
+function Get-PythonExe {
+    $py = Get-Command py -ErrorAction SilentlyContinue
+    if ($py) {
+        $exe = & py -3 -c "import sys; print(sys.executable)"
+        if ($LASTEXITCODE -eq 0 -and $exe) { return $exe.Trim() }
+    }
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) { return $python.Source }
+    throw "No Python installation found. Install Python from https://python.org and re-run this script."
+}
+
+$pythonExe = Get-PythonExe
+Write-Host "Using Python: $pythonExe"
+
+$pythonDir = Split-Path $pythonExe -Parent
+$pythonwExe = Join-Path $pythonDir "pythonw.exe"
+if (-not (Test-Path $pythonwExe)) { $pythonwExe = $pythonExe }
+
+Write-Host "Installing pywebview into this interpreter..."
+& $pythonExe -m pip install --quiet --upgrade pywebview
+
+$installDir = "$env:LOCALAPPDATA\ClaudePet"
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+Copy-Item -Path "$PSScriptRoot\claude_pet.html" -Destination $installDir -Force
+Copy-Item -Path "$PSScriptRoot\pet_app.py" -Destination $installDir -Force
+
+$startupFolder = [Environment]::GetFolderPath("Startup")
+$shortcutPath = Join-Path $startupFolder "ClaudePet.lnk"
+
+$wsh = New-Object -ComObject WScript.Shell
+$shortcut = $wsh.CreateShortcut($shortcutPath)
+$shortcut.TargetPath = $pythonwExe
+$shortcut.Arguments = "`"$installDir\pet_app.py`""
+$shortcut.WorkingDirectory = $installDir
+$shortcut.Save()
+
+Write-Host "Installed to $installDir"
+Write-Host "Will auto-start at login via: $shortcutPath"
+Write-Host "Starting Claude Pet now..."
+Start-Process -FilePath $pythonwExe -ArgumentList "`"$installDir\pet_app.py`""

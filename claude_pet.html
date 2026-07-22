@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>Claude Code Pet</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+  #stage {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+  }
+  .pet {
+    animation: bob 2.2s ease-in-out infinite;
+    transform-origin: center bottom;
+    cursor: pointer;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+  }
+  .pet.jump {
+    animation: jump 0.55s ease-out;
+  }
+  @keyframes jump {
+    0%   { transform: translateY(0) scaleY(1); }
+    25%  { transform: translateY(0) scaleY(0.82); }
+    55%  { transform: translateY(-45px) scaleY(1.08); }
+    80%  { transform: translateY(0) scaleY(0.92); }
+    100% { transform: translateY(0) scaleY(1); }
+  }
+  .foot {
+    animation: stomp 2.2s ease-in-out infinite;
+    transform-origin: center top;
+  }
+  .footL { animation-delay: 0s; }
+  .footR { animation-delay: 1.1s; }
+  @keyframes stomp {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+  }
+  .spark {
+    animation: sparkSpin 6s linear infinite, sparkPulse 1.8s ease-in-out infinite;
+    transform-origin: 100px 6px;
+  }
+  @keyframes sparkSpin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  @keyframes sparkPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+  #eyesBlink, #eyesHappy { opacity: 0; }
+  .bubble { opacity: 0; }
+  .bubbleText { font-family: 'Courier New', monospace; font-weight: bold; fill: #4A1B0C; }
+  .heart { opacity: 0; fill: #D85A30; }
+</style>
+</head>
+<body>
+<div id="stage">
+<svg id="petSvg" class="pet" width="280" height="260" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- shadow -->
+  <ellipse cx="100" cy="132" rx="46" ry="8" fill="#000000" opacity="0.15"/>
+
+  <!-- antenna -->
+  <line x1="100" y1="20" x2="100" y2="8" stroke="#B94A24" stroke-width="4"/>
+  <g class="spark">
+    <path d="M100 -2 L103.5 4.5 L110 4.5 L105 8.5 L107 15 L100 11 L93 15 L95 8.5 L90 4.5 L96.5 4.5 Z" fill="#F0997B"/>
+  </g>
+
+  <!-- feet -->
+  <rect class="foot footL" x="53" y="94" width="30" height="22" rx="8" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
+  <rect class="foot footR" x="117" y="94" width="30" height="22" rx="8" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
+
+  <!-- ears -->
+  <rect x="12" y="38" width="22" height="28" rx="9" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
+  <rect x="166" y="38" width="22" height="28" rx="9" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
+
+  <!-- body -->
+  <rect x="30" y="16" width="140" height="88" rx="26" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
+
+  <!-- visor / face screen -->
+  <rect x="50" y="32" width="100" height="42" rx="13" fill="#20201E"/>
+
+  <!-- default eyes -->
+  <g id="eyesDefault" font-family="Courier New, monospace" font-weight="bold" fill="#F0997B" text-anchor="middle">
+    <text x="82" y="59" font-size="24">&lt;</text>
+    <text x="118" y="59" font-size="24">&gt;</text>
+  </g>
+
+  <!-- blink eyes -->
+  <g id="eyesBlink" fill="#F0997B">
+    <rect x="72" y="49" width="20" height="5.5" rx="2.5"/>
+    <rect x="108" y="49" width="20" height="5.5" rx="2.5"/>
+  </g>
+
+  <!-- happy eyes on click -->
+  <g id="eyesHappy" font-family="Courier New, monospace" font-weight="bold" fill="#F0997B" text-anchor="middle">
+    <text x="82" y="57" font-size="20">^</text>
+    <text x="118" y="57" font-size="20">^</text>
+  </g>
+
+  <!-- cheeks -->
+  <rect x="42" y="79" width="11" height="6" rx="2" fill="#F5C4B3" opacity="0.85"/>
+  <rect x="147" y="79" width="11" height="6" rx="2" fill="#F5C4B3" opacity="0.85"/>
+
+  <!-- speech bubble -->
+  <g id="bubbleGroup" class="bubble" transform="translate(96,-52)">
+    <rect x="0" y="0" width="86" height="30" rx="10" fill="#FAECE7" stroke="#D85A30" stroke-width="2"/>
+    <path d="M22 30 L14 41 L34 30 Z" fill="#FAECE7" stroke="#D85A30" stroke-width="2"/>
+    <text id="bubbleText" class="bubbleText" x="43" y="20" font-size="12" text-anchor="middle">&gt; hi_</text>
+  </g>
+
+  <!-- heart burst -->
+  <text id="heart1" class="heart" x="150" y="28" font-size="18">&#9829;</text>
+</svg>
+</div>
+
+<script>
+  const pet = document.getElementById('petSvg');
+  const heart = document.getElementById('heart1');
+  const bubbleGroup = document.getElementById('bubbleGroup');
+  const bubbleText = document.getElementById('bubbleText');
+  const eyesDefault = document.getElementById('eyesDefault');
+  const eyesBlink = document.getElementById('eyesBlink');
+  const eyesHappy = document.getElementById('eyesHappy');
+  let animating = false;
+
+  const phrases = ['> hi_', '> :)_', '> ok_', '> run_', '> yo_'];
+
+  function blinkOnce() {
+    eyesDefault.style.opacity = '0';
+    eyesBlink.style.opacity = '1';
+    setTimeout(() => {
+      eyesDefault.style.opacity = '1';
+      eyesBlink.style.opacity = '0';
+    }, 140);
+  }
+
+  function scheduleBlink() {
+    const delay = 2600 + Math.random() * 2600;
+    setTimeout(() => {
+      blinkOnce();
+      scheduleBlink();
+    }, delay);
+  }
+  scheduleBlink();
+
+  pet.addEventListener('click', () => {
+    if (animating) return;
+    animating = true;
+    pet.classList.add('jump');
+
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_claude) {
+      window.pywebview.api.open_claude();
+    }
+
+    eyesDefault.style.opacity = '0';
+    eyesHappy.style.opacity = '1';
+
+    heart.style.transition = 'none';
+    heart.style.opacity = '1';
+    heart.style.transform = 'translateY(0)';
+    requestAnimationFrame(() => {
+      heart.style.transition = 'opacity 1.1s ease-out, transform 1.1s ease-out';
+      heart.style.opacity = '0';
+      heart.style.transform = 'translateY(-40px)';
+    });
+
+    bubbleText.textContent = phrases[Math.floor(Math.random() * phrases.length)];
+    bubbleGroup.style.transition = 'none';
+    bubbleGroup.style.opacity = '1';
+    setTimeout(() => {
+      bubbleGroup.style.transition = 'opacity 0.8s ease-out';
+      bubbleGroup.style.opacity = '0';
+    }, 1300);
+
+    setTimeout(() => {
+      pet.classList.remove('jump');
+      eyesHappy.style.opacity = '0';
+      eyesDefault.style.opacity = '1';
+      animating = false;
+    }, 600);
+  });
+</script>
+</body>
+</html>
