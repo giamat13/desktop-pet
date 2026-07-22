@@ -17,7 +17,7 @@ import webview
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 HTML_PATH = os.path.join(APP_DIR, "claude_pet.html")
 
-WIN_W, WIN_H = 220, 220
+WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
 DEFAULT_TASKBAR_MARGIN = 46  # used only as an initial guess for calibration
 
 CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\ClaudePet")

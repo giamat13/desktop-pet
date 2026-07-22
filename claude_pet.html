@@ -16,9 +16,17 @@
     width: 100%;
     height: 100vh;
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: center;
     background: transparent;
+  }
+  #petWrap {
+    transition: transform 0.2s ease-out;
+    transform-origin: center bottom;
+    transform: scale(var(--pet-scale, 1));
+  }
+  #petWrap.pet-hover {
+    transform: scale(calc(var(--pet-scale, 1) * 1.08)) rotate(-3deg);
   }
   .pet {
     animation: bob 2.2s ease-in-out infinite;
@@ -88,10 +96,10 @@
     font-size: 12px;
     line-height: 1.4;
   }
-  #calSlider {
+  #calSlider, #sizeSlider {
     width: 170px;
   }
-  #calValue {
+  #calValue, #sizeValue {
     color: #B94A24;
     font-size: 12px;
     margin: 6px 0 8px;
@@ -117,10 +125,14 @@
     <p>גררי את המחוון עד שהחיה יושבת בול על שורת המשימות</p>
     <input id="calSlider" type="range" min="-80" max="180" value="46" />
     <div id="calValue">46px</div>
+    <p>גודל החיה</p>
+    <input id="sizeSlider" type="range" min="70" max="130" value="100" />
+    <div id="sizeValue">100%</div>
     <button id="calSave">שמור מיקום ✓</button>
   </div>
 </div>
-<svg id="petSvg" class="pet" width="280" height="260" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+<div id="petWrap">
+<svg id="petSvg" class="pet" width="230" height="172" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
 
   <!-- shadow -->
   <ellipse cx="100" cy="132" rx="46" ry="8" fill="#000000" opacity="0.15"/>
@@ -178,9 +190,13 @@
   <text id="heart1" class="heart" x="150" y="28" font-size="18">&#9829;</text>
 </svg>
 </div>
+</div>
 
 <script>
   const pet = document.getElementById('petSvg');
+  const petWrap = document.getElementById('petWrap');
+  pet.addEventListener('mouseenter', () => petWrap.classList.add('pet-hover'));
+  pet.addEventListener('mouseleave', () => petWrap.classList.remove('pet-hover'));
   const heart = document.getElementById('heart1');
   const bubbleGroup = document.getElementById('bubbleGroup');
   const bubbleText = document.getElementById('bubbleText');
@@ -208,6 +224,11 @@
     }, delay);
   }
   scheduleBlink();
+
+  function applyPetScale(pct) {
+    petWrap.style.setProperty('--pet-scale', (pct / 100).toString());
+  }
+  applyPetScale(parseInt(localStorage.getItem('petScalePct'), 10) || 100);
 
   function handlePetClick() {
     if (animating) return;
@@ -299,6 +320,15 @@
   const slider = document.getElementById('calSlider');
   const valueLabel = document.getElementById('calValue');
   const saveBtn = document.getElementById('calSave');
+  const sizeSlider = document.getElementById('sizeSlider');
+  const sizeValueLabel = document.getElementById('sizeValue');
+
+  sizeSlider.addEventListener('input', () => {
+    const pct = parseInt(sizeSlider.value, 10);
+    sizeValueLabel.textContent = pct + '%';
+    applyPetScale(pct);
+    localStorage.setItem('petScalePct', pct);
+  });
 
   function callApi(method, value) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
@@ -331,6 +361,9 @@
     const m = parseInt(margin, 10) || 46;
     slider.value = m;
     valueLabel.textContent = m + 'px';
+    const pct = parseInt(localStorage.getItem('petScalePct'), 10) || 100;
+    sizeSlider.value = pct;
+    sizeValueLabel.textContent = pct + '%';
     panel.style.display = 'flex';
   }
 
