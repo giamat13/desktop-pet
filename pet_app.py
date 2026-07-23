@@ -1,5 +1,5 @@
 """
-Claude Pet desktop overlay.
+Desktop Pet overlay.
 A frameless, transparent, always-on-top sprite that sits on the taskbar,
 does not appear in the taskbar/alt-tab as its own app, can be dragged,
 and falls back down to the taskbar when released.
@@ -398,7 +398,7 @@ def get_pet_config():
 
 
 class Api:
-    def __init__(self, screen_h, open_target):
+    def __init__(self, screen_h, open_target, window_title):
         # NOTE: must stay underscore-prefixed. pywebview introspects every
         # public attribute of the js_api object to expose it to JS, and would
         # otherwise recurse forever into window.native.AccessibilityObject
@@ -406,6 +406,7 @@ class Api:
         # hitting "maximum recursion depth exceeded" during page load.
         self._window = None
         self._open_target = open_target  # callable that opens the fronted app
+        self._window_title = window_title  # for FindWindow-based z-order/taskbar calls
         self._settings_window = None
         self.dragging = False
         self.screen_h = screen_h
@@ -430,7 +431,7 @@ class Api:
         try:
             if self._settings_window is not None:
                 return  # already open
-            sapi = SettingsApi(self._window, self.screen_h)
+            sapi = SettingsApi(self._window, self.screen_h, self._window_title)
             sw = webview.create_window(
                 title="הגדרות",
                 url=SETTINGS_PATH,
@@ -489,9 +490,10 @@ class Api:
 class SettingsApi:
     """js_api for the separate settings window. Edits the pet live + persists."""
 
-    def __init__(self, pet_window, screen_h):
+    def __init__(self, pet_window, screen_h, pet_window_title):
         self._window = None          # the settings window itself
         self._pet_window = pet_window
+        self._pet_window_title = pet_window_title
         self.screen_h = screen_h
 
     def get_pet_config(self):
@@ -525,7 +527,7 @@ class SettingsApi:
         try:
             desktop = (mode == "desktop")
             update_config(position="desktop" if desktop else "taskbar")
-            apply_zorder("Claude Pet", desktop)
+            apply_zorder(self._pet_window_title, desktop)
             if desktop:
                 return None
             margin = get_margin()
@@ -559,6 +561,7 @@ def main():
     html_file = PETS.get(pet, PETS["claude"])
     html_path = os.path.join(APP_DIR, html_file)
     open_target = launch_vlc if pet == "vlc" else launch_claude_desktop
+    window_title = "VLC Pet" if pet == "vlc" else "Desktop Pet"
 
     screen_w, screen_h = get_screen_size()
     margin = get_margin()
@@ -566,10 +569,10 @@ def main():
     start_x = screen_w - WIN_W - 80
     start_y = screen_h - WIN_H - margin
 
-    api = Api(screen_h, open_target)
+    api = Api(screen_h, open_target, window_title)
 
     window = webview.create_window(
-        title="Claude Pet",
+        title=window_title,
         url=html_path,
         width=WIN_W,
         height=WIN_H,
@@ -586,9 +589,9 @@ def main():
 
     def _on_loaded():
         if sys.platform == "win32":
-            hide_from_taskbar("Claude Pet")
+            hide_from_taskbar(window_title)
             if load_config().get("position", "taskbar") == "desktop":
-                apply_zorder("Claude Pet", desktop=True)
+                apply_zorder(window_title, desktop=True)
 
     window.events.loaded += _on_loaded
 

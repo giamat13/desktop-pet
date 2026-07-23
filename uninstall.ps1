@@ -1,4 +1,4 @@
-# Removes Claude Pet: kills the running app, deletes the startup shortcut and install folder.
+# Removes Desktop Pet: kills the running app, deletes the startup shortcut and install folder.
 
 $installDir = "$env:LOCALAPPDATA\ClaudePet"
 $startupFolder = [Environment]::GetFolderPath("Startup")
@@ -11,4 +11,4 @@ Get-Process pythonw -ErrorAction SilentlyContinue |
 if (Test-Path $shortcutPath) { Remove-Item $shortcutPath -Force }
 if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
 
-Write-Host "Claude Pet removed."
+Write-Host "Desktop Pet removed."

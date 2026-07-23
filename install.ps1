@@ -1,4 +1,4 @@
-# Claude Pet installer
+# Desktop Pet installer
 # Finds one consistent Python interpreter, installs pywebview into it,
 # copies the app to %LOCALAPPDATA%\ClaudePet, registers it to run at
 # every login, and starts it immediately.
@@ -33,10 +33,12 @@ $installDir = "$env:LOCALAPPDATA\ClaudePet"
 # until the next login.
 Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
     Where-Object { $_.CommandLine -like "*ClaudePet*pet_app.py*" } |
-    ForEach-Object { Write-Host "Stopping running Claude Pet (pid $($_.ProcessId))..."; Stop-Process -Id $_.ProcessId -Force }
+    ForEach-Object { Write-Host "Stopping running Desktop Pet (pid $($_.ProcessId))..."; Stop-Process -Id $_.ProcessId -Force }
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item -Path "$PSScriptRoot\claude_pet.html" -Destination $installDir -Force
+Copy-Item -Path "$PSScriptRoot\vlc-pet.html" -Destination $installDir -Force
+Copy-Item -Path "$PSScriptRoot\settings.html" -Destination $installDir -Force
 Copy-Item -Path "$PSScriptRoot\pet_app.py" -Destination $installDir -Force
 
 $startupFolder = [Environment]::GetFolderPath("Startup")
@@ -51,5 +53,5 @@ $shortcut.Save()
 
 Write-Host "Installed to $installDir"
 Write-Host "Will auto-start at login via: $shortcutPath"
-Write-Host "Starting Claude Pet now..."
+Write-Host "Starting Desktop Pet now..."
 Start-Process -FilePath $pythonwExe -ArgumentList "`"$installDir\pet_app.py`""
