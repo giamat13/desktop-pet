@@ -325,11 +325,39 @@ def launch_vlc():
         log("launch_vlc fallback failed:", exc)
 
 
-def margin_for_position(mode):
-    """Preset margins: rest ON the taskbar (0) or on the desktop above it."""
-    if mode == "taskbar":
-        return 0
-    return get_taskbar_height()  # "desktop": stand just above the taskbar
+def apply_zorder(title, desktop):
+    """
+    Place the pet in the window Z-order.
+
+    desktop=True  -> HWND_BOTTOM: drops the topmost flag and sinks the pet to
+                     the bottom of the stack, so it lives at the wallpaper
+                     level and is only visible when every window is minimized
+                     (i.e. the desktop is showing).
+    desktop=False -> HWND_TOPMOST: the classic always-on-taskbar behavior.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import win32gui
+        import win32con
+    except ImportError:
+        log("pywin32 not installed - cannot set z-order")
+        return
+
+    def _apply():
+        try:
+            insert_after = win32con.HWND_BOTTOM if desktop else win32con.HWND_TOPMOST
+            flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+            for _ in range(50):
+                hwnd = win32gui.FindWindow(None, title)
+                if hwnd:
+                    win32gui.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags)
+                    return
+                time.sleep(0.1)
+        except Exception as exc:
+            log("apply_zorder failed:", exc)
+
+    threading.Thread(target=_apply, daemon=True).start()
 
 
 def hide_from_taskbar(title):
@@ -365,7 +393,7 @@ def get_pet_config():
     return {
         "margin": get_margin(),
         "size": cfg.get("size", 100),
-        "position": cfg.get("position", "desktop"),
+        "position": cfg.get("position", "taskbar"),
     }
 
 
@@ -435,7 +463,10 @@ class Api:
 
     def drop(self):
         self.dragging = False
-        threading.Thread(target=self._fall, daemon=True).start()
+        # Desktop mode: the pet stays wherever it's dropped (it lives on the
+        # wallpaper). Only taskbar mode snaps back down onto the taskbar.
+        if load_config().get("position", "taskbar") != "desktop":
+            threading.Thread(target=self._fall, daemon=True).start()
 
     def _fall(self):
         if not self._window:
@@ -485,12 +516,20 @@ class SettingsApi:
             log("set_margin failed:", exc)
 
     def set_position(self, mode):
-        """Desktop/taskbar preset. Returns the resulting margin for the slider."""
+        """
+        Switch placement mode. 'taskbar' = always-on-top, rests on the taskbar
+        and falls back to it. 'desktop' = sinks to the wallpaper layer (only
+        visible when everything is minimized) and no longer falls. Returns the
+        resting margin so the settings slider can re-sync (None for desktop).
+        """
         try:
-            mode = "taskbar" if mode == "taskbar" else "desktop"
-            margin = margin_for_position(mode)
+            desktop = (mode == "desktop")
+            update_config(position="desktop" if desktop else "taskbar")
+            apply_zorder("Claude Pet", desktop)
+            if desktop:
+                return None
+            margin = get_margin()
             self._move_pet(margin)
-            update_config(position=mode, taskbar_margin=margin)
             return margin
         except Exception as exc:
             log("set_position failed:", exc)
@@ -548,6 +587,8 @@ def main():
     def _on_loaded():
         if sys.platform == "win32":
             hide_from_taskbar("Claude Pet")
+            if load_config().get("position", "taskbar") == "desktop":
+                apply_zorder("Claude Pet", desktop=True)
 
     window.events.loaded += _on_loaded
 
