@@ -557,43 +557,47 @@ class SettingsApi:
 
 def main():
     make_dpi_aware()
-    pet = sys.argv[1].lower() if len(sys.argv) > 1 else "claude"
-    html_file = PETS.get(pet, PETS["claude"])
-    html_path = os.path.join(APP_DIR, html_file)
-    open_target = launch_vlc if pet == "vlc" else launch_claude_desktop
-    window_title = "VLC Pet" if pet == "vlc" else "Desktop Pet"
+    # `pet_app.py` (no args) shows every pet side by side.
+    # `pet_app.py claude` / `pet_app.py vlc` shows just one.
+    arg = sys.argv[1].lower() if len(sys.argv) > 1 else None
+    pets = [arg] if arg in PETS else list(PETS)
 
     screen_w, screen_h = get_screen_size()
     margin = get_margin()
-
-    start_x = screen_w - WIN_W - 80
+    gap = 20
     start_y = screen_h - WIN_H - margin
+    start_x = screen_w - len(pets) * (WIN_W + gap) - 60
 
-    api = Api(screen_h, open_target, window_title)
+    for i, pet in enumerate(pets):
+        html_path = os.path.join(APP_DIR, PETS[pet])
+        open_target = launch_vlc if pet == "vlc" else launch_claude_desktop
+        window_title = "VLC Pet" if pet == "vlc" else "Desktop Pet"
 
-    window = webview.create_window(
-        title=window_title,
-        url=html_path,
-        width=WIN_W,
-        height=WIN_H,
-        x=start_x,
-        y=start_y,
-        frameless=True,
-        easy_drag=False,
-        on_top=True,
-        transparent=True,
-        resizable=False,
-        js_api=api,
-    )
-    api._window = window
+        api = Api(screen_h, open_target, window_title)
 
-    def _on_loaded():
-        if sys.platform == "win32":
-            hide_from_taskbar(window_title)
-            if load_config().get("position", "taskbar") == "desktop":
-                apply_zorder(window_title, desktop=True)
+        window = webview.create_window(
+            title=window_title,
+            url=html_path,
+            width=WIN_W,
+            height=WIN_H,
+            x=start_x + i * (WIN_W + gap),
+            y=start_y,
+            frameless=True,
+            easy_drag=False,
+            on_top=True,
+            transparent=True,
+            resizable=False,
+            js_api=api,
+        )
+        api._window = window
 
-    window.events.loaded += _on_loaded
+        def _on_loaded(window_title=window_title):
+            if sys.platform == "win32":
+                hide_from_taskbar(window_title)
+                if load_config().get("position", "taskbar") == "desktop":
+                    apply_zorder(window_title, desktop=True)
+
+        window.events.loaded += _on_loaded
 
     webview.start()
 
