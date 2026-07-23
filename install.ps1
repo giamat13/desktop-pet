@@ -37,6 +37,7 @@ Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" 
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item -Path "$PSScriptRoot\claude_pet.html" -Destination $installDir -Force
+Copy-Item -Path "$PSScriptRoot\settings_pet.html" -Destination $installDir -Force
 Copy-Item -Path "$PSScriptRoot\pet_app.py" -Destination $installDir -Force
 
 $startupFolder = [Environment]::GetFolderPath("Startup")

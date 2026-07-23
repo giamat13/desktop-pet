@@ -68,69 +68,11 @@
   .bubbleText { font-family: 'Courier New', monospace; font-weight: bold; fill: #4A1B0C; }
   .heart { opacity: 0; fill: #D85A30; }
 
-  #calibrationPanel {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 9999;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 6px;
-    pointer-events: none;
-  }
-  #calibrationCard {
-    pointer-events: auto;
-    background: #FAECE7;
-    border: 2px solid #D85A30;
-    border-radius: 14px;
-    padding: 10px 14px 12px;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.28);
-    text-align: center;
-    max-width: 200px;
-    font-family: 'Courier New', monospace;
-  }
-  #calibrationCard p {
-    margin: 0 0 8px;
-    color: #4A1B0C;
-    font-weight: bold;
-    font-size: 12px;
-    line-height: 1.4;
-  }
-  #calSlider, #sizeSlider {
-    width: 170px;
-  }
-  #calValue, #sizeValue {
-    color: #B94A24;
-    font-size: 12px;
-    margin: 6px 0 8px;
-  }
-  #calSave {
-    background: #D2703C;
-    color: #FFF7F0;
-    border: none;
-    border-radius: 8px;
-    padding: 6px 14px;
-    font-family: inherit;
-    font-weight: bold;
-    font-size: 12px;
-    cursor: pointer;
-  }
-  #calSave:active { transform: scale(0.97); }
 </style>
 </head>
 <body>
 <div id="stage">
-<div id="calibrationPanel">
-  <div id="calibrationCard">
-    <p>גררי את המחוון עד שהחיה יושבת בול על שורת המשימות</p>
-    <input id="calSlider" type="range" min="-80" max="180" value="46" />
-    <div id="calValue">46px</div>
-    <p>גודל החיה</p>
-    <input id="sizeSlider" type="range" min="70" max="130" value="100" />
-    <div id="sizeValue">100%</div>
-    <button id="calSave">שמור מיקום ✓</button>
-  </div>
-</div>
+
 <div id="petWrap">
 <svg id="petSvg" class="pet" width="230" height="172" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
 
@@ -225,11 +167,6 @@
   }
   scheduleBlink();
 
-  function applyPetScale(pct) {
-    petWrap.style.setProperty('--pet-scale', (pct / 100).toString());
-  }
-  applyPetScale(parseInt(localStorage.getItem('petScalePct'), 10) || 100);
-
   function handlePetClick() {
     if (animating) return;
     animating = true;
@@ -312,81 +249,23 @@
     isDragging = false;
   });
 
-  // --- Calibration / settings panel ---
-  // Shown automatically on first run, and re-openable anytime by
-  // middle-clicking the pet. Listeners are wired once here; openSettings()
-  // just seeds the slider with the current margin and reveals the panel.
-  const panel = document.getElementById('calibrationPanel');
-  const slider = document.getElementById('calSlider');
-  const valueLabel = document.getElementById('calValue');
-  const saveBtn = document.getElementById('calSave');
-  const sizeSlider = document.getElementById('sizeSlider');
-  const sizeValueLabel = document.getElementById('sizeValue');
+  // ------------------------------------------------------------------ //
+  // Settings live entirely on the Python side now (a native window - see
+  // open_settings_window / _build_and_run_settings in pet_app.py). This
+  // page's only job is to ask Python to open that window; it no longer
+  // renders any settings UI itself. Python also pushes live scale updates
+  // back into --pet-scale while the size slider is being dragged (see
+  // on_size_change in pet_app.py), and pushes the saved scale in once on
+  // load (see _on_loaded in pet_app.py), so nothing here needs to read or
+  // write petScalePct anymore.
+  // ------------------------------------------------------------------ //
 
-  sizeSlider.addEventListener('input', () => {
-    const pct = parseInt(sizeSlider.value, 10);
-    sizeValueLabel.textContent = pct + '%';
-    applyPetScale(pct);
-    localStorage.setItem('petScalePct', pct);
-  });
-
-  function callApi(method, value) {
-    if (window.pywebview && window.pywebview.api && window.pywebview.api[method]) {
-      window.pywebview.api[method](value);
-    }
-  }
-
-  let throttleTimer = null;
-  slider.addEventListener('input', () => {
-    const margin = parseInt(slider.value, 10);
-    valueLabel.textContent = margin + 'px';
-    if (throttleTimer) return;
-    throttleTimer = setTimeout(() => {
-      callApi('set_calibration_margin', margin);
-      throttleTimer = null;
-    }, 40);
-  });
-
-  saveBtn.addEventListener('click', () => {
-    const margin = parseInt(slider.value, 10);
-    callApi('finish_calibration', margin);
-    saveBtn.textContent = 'נשמר! ✓';
-    setTimeout(() => {
-      saveBtn.textContent = 'שמור מיקום ✓';
-      panel.style.display = 'none';
-    }, 900);
-  });
-
-  function openSettings(margin) {
-    const m = parseInt(margin, 10) || 46;
-    slider.value = m;
-    valueLabel.textContent = m + 'px';
-    const pct = parseInt(localStorage.getItem('petScalePct'), 10) || 100;
-    sizeSlider.value = pct;
-    sizeValueLabel.textContent = pct + '%';
-    panel.style.display = 'flex';
-  }
-
-  // The page asks Python (via pywebview.api - the same safe JS -> Python
-  // direction used for open_claude/drag/drop) for the saved margin. The pet
-  // never auto-opens this panel: the taskbar height is auto-detected, and the
-  // user opens settings on demand by middle-clicking the pet.
-  function withCalibrationState(cb) {
-    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_calibration_state) {
-      window.pywebview.api.get_calibration_state().then(cb).catch((e) => {
-        console.error('get_calibration_state failed', e);
-      });
-      return true;
-    }
-    return false;
-  }
-
-  // Middle-click the pet -> open the settings/calibration panel.
+  // Middle-click (scroll-wheel click) the pet -> open the native settings window.
   pet.addEventListener('auxclick', (e) => {
     if (e.button !== 1) return;
     e.preventDefault();
-    if (!withCalibrationState((state) => openSettings(state && state.margin))) {
-      openSettings(46);
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings_window) {
+      window.pywebview.api.open_settings_window();
     }
   });
 </script>
