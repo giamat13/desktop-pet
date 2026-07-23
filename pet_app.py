@@ -15,7 +15,13 @@ import threading
 import webview
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-HTML_PATH = os.path.join(APP_DIR, "claude_pet.html")
+SETTINGS_PATH = os.path.join(APP_DIR, "settings.html")
+
+# Which pet to run: `python pet_app.py [claude|vlc]` (default claude).
+PETS = {
+    "claude": "claude_pet.html",
+    "vlc": "vlc-pet.html",
+}
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
 DEFAULT_TASKBAR_MARGIN = 46  # used only as an initial guess for calibration
@@ -63,6 +69,13 @@ def save_config(cfg):
         log("save_config failed:", exc)
 
 
+def update_config(**changes):
+    """Merge changes into config without clobbering unrelated keys."""
+    cfg = load_config()
+    cfg.update(changes)
+    save_config(cfg)
+
+
 def get_margin():
     """
     The vertical distance (px) the pet should rest above the bottom of the
@@ -74,6 +87,31 @@ def get_margin():
     if "taskbar_margin" in cfg:
         return cfg["taskbar_margin"]
     return get_taskbar_height()
+
+
+def make_dpi_aware():
+    """
+    Match pywebview/WebView2's own per-monitor DPI awareness so every
+    coordinate agrees in real, physical pixels. Without this, Python stays
+    DPI-unaware and get_screen_size() reports a virtualized screen (e.g.
+    1600x900 on a 120%-scaled 1920x1080 display), while WebView2 then places
+    the window in physical pixels - so the pet is positioned against the
+    wrong screen height and floats up mid-screen instead of resting on the
+    taskbar. Must run before get_screen_size() and before create_window().
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        # PER_MONITOR_AWARE_V2 == DPI_AWARENESS_CONTEXT (-4)
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_AWARE
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()  # system-DPI (Vista+)
+            except Exception as exc:
+                log("make_dpi_aware failed:", exc)
 
 
 def get_screen_size():
@@ -267,6 +305,33 @@ def launch_claude_desktop():
             log("Could not open Claude Desktop:", exc)
 
 
+def launch_vlc():
+    """Open VLC media player (the app the vlc-pet fronts for)."""
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles%\VideoLAN\VLC\vlc.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\VideoLAN\VLC\vlc.exe"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                os.startfile(path)
+                return
+            except Exception as exc:
+                log("launch_vlc failed:", exc)
+    # Fall back to the shell association (works if VLC is on PATH / registered).
+    try:
+        os.startfile("vlc")
+    except Exception as exc:
+        log("launch_vlc fallback failed:", exc)
+
+
+def margin_for_position(mode):
+    """Preset margins: rest ON the taskbar (0) or on the desktop above it."""
+    if mode == "taskbar":
+        return 0
+    return get_taskbar_height()  # "desktop": stand just above the taskbar
+
+
 def hide_from_taskbar(title):
     """Strip the taskbar/alt-tab entry so only the sprite is visible, no app window."""
     try:
@@ -294,19 +359,68 @@ def hide_from_taskbar(title):
     threading.Thread(target=_apply, daemon=True).start()
 
 
+def get_pet_config():
+    """Everything the pet / settings pages need to render themselves."""
+    cfg = load_config()
+    return {
+        "margin": get_margin(),
+        "size": cfg.get("size", 100),
+        "position": cfg.get("position", "desktop"),
+    }
+
+
 class Api:
-    def __init__(self, screen_h):
+    def __init__(self, screen_h, open_target):
         # NOTE: must stay underscore-prefixed. pywebview introspects every
         # public attribute of the js_api object to expose it to JS, and would
         # otherwise recurse forever into window.native.AccessibilityObject
         # .Bounds.Empty... (WinForms Rectangle.Empty returns a Rectangle),
         # hitting "maximum recursion depth exceeded" during page load.
         self._window = None
+        self._open_target = open_target  # callable that opens the fronted app
+        self._settings_window = None
         self.dragging = False
         self.screen_h = screen_h
 
+    # Both pets call their own "open" name; expose both, same action.
     def open_claude(self):
-        launch_claude_desktop()
+        self._open_target()
+
+    def open_app(self):
+        self._open_target()
+
+    def get_pet_config(self):
+        """
+        JS -> Python is the safe/proven direction here; the reverse (Python
+        pushing into JS via evaluate_js from the "loaded" event) can deadlock
+        the GUI thread. The page calls this once pywebview.api is ready.
+        """
+        return get_pet_config()
+
+    def open_settings_window(self):
+        """Middle-click the pet -> open settings in its own native window."""
+        try:
+            if self._settings_window is not None:
+                return  # already open
+            sapi = SettingsApi(self._window, self.screen_h)
+            sw = webview.create_window(
+                title="הגדרות",
+                url=SETTINGS_PATH,
+                width=320,
+                height=340,
+                on_top=True,
+                resizable=False,
+                js_api=sapi,
+            )
+            sapi._window = sw
+            self._settings_window = sw
+
+            def _closed():
+                self._settings_window = None
+
+            sw.events.closed += _closed
+        except Exception as exc:
+            log("open_settings_window failed:", exc)
 
     def start_drag(self):
         self.dragging = True
@@ -340,52 +454,84 @@ class Api:
         except Exception as exc:
             log("_fall failed:", exc)
 
-    def set_calibration_margin(self, margin):
-        """Live-preview: move the window as the user drags the calibration slider."""
-        if not self._window:
+
+class SettingsApi:
+    """js_api for the separate settings window. Edits the pet live + persists."""
+
+    def __init__(self, pet_window, screen_h):
+        self._window = None          # the settings window itself
+        self._pet_window = pet_window
+        self.screen_h = screen_h
+
+    def get_pet_config(self):
+        return get_pet_config()
+
+    def _move_pet(self, margin):
+        if not self._pet_window:
             return
         try:
-            margin = int(margin)
-            y = self.screen_h - WIN_H - margin
-            self._window.move(int(self._window.x), int(y))
+            y = self.screen_h - WIN_H - int(margin)
+            self._pet_window.move(int(self._pet_window.x), int(y))
         except Exception as exc:
-            log("set_calibration_margin failed:", exc)
+            log("settings _move_pet failed:", exc)
 
-    def get_calibration_state(self):
-        """
-        Called by the page itself once window.pywebview.api is ready (JS ->
-        Python is the safe/proven direction here; the reverse - Python
-        pushing into JS via evaluate_js from the "loaded" event - can
-        deadlock the GUI thread, which is what caused Python to hang).
-        """
-        cfg = load_config()
-        if "taskbar_margin" in cfg:
-            return {"calibrate": False, "margin": cfg["taskbar_margin"]}
-        return {"calibrate": True, "margin": get_taskbar_height()}
-
-    def finish_calibration(self, margin):
-        """Persist the user's chosen margin so setup never has to run again."""
+    def set_margin(self, margin):
+        """Fine-tune slider: live-move the pet and persist the exact margin."""
         try:
             margin = int(margin)
-            save_config({"taskbar_margin": margin})
-            log(f"Taskbar margin calibrated and saved: {margin}px")
+            self._move_pet(margin)
+            update_config(taskbar_margin=margin)
         except Exception as exc:
-            log("finish_calibration failed:", exc)
+            log("set_margin failed:", exc)
+
+    def set_position(self, mode):
+        """Desktop/taskbar preset. Returns the resulting margin for the slider."""
+        try:
+            mode = "taskbar" if mode == "taskbar" else "desktop"
+            margin = margin_for_position(mode)
+            self._move_pet(margin)
+            update_config(position=mode, taskbar_margin=margin)
+            return margin
+        except Exception as exc:
+            log("set_position failed:", exc)
+            return None
+
+    def set_size(self, pct):
+        """Relay size to the pet page (evaluate_js is safe from a click)."""
+        try:
+            pct = int(pct)
+            update_config(size=pct)
+            if self._pet_window:
+                self._pet_window.evaluate_js(f"applyPetScale({pct})")
+        except Exception as exc:
+            log("set_size failed:", exc)
+
+    def close_settings(self):
+        try:
+            if self._window:
+                self._window.destroy()
+        except Exception as exc:
+            log("close_settings failed:", exc)
 
 
 def main():
+    make_dpi_aware()
+    pet = sys.argv[1].lower() if len(sys.argv) > 1 else "claude"
+    html_file = PETS.get(pet, PETS["claude"])
+    html_path = os.path.join(APP_DIR, html_file)
+    open_target = launch_vlc if pet == "vlc" else launch_claude_desktop
+
     screen_w, screen_h = get_screen_size()
-    cfg = load_config()
-    margin = cfg.get("taskbar_margin", get_taskbar_height())
+    margin = get_margin()
 
     start_x = screen_w - WIN_W - 80
     start_y = screen_h - WIN_H - margin
 
-    api = Api(screen_h)
+    api = Api(screen_h, open_target)
 
     window = webview.create_window(
         title="Claude Pet",
-        url=HTML_PATH,
+        url=html_path,
         width=WIN_W,
         height=WIN_H,
         x=start_x,

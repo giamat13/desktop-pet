@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>הגדרות</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #FAECE7;
+    font-family: 'Courier New', monospace;
+    color: #4A1B0C;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px 20px;
+    box-sizing: border-box;
+  }
+  h1 { margin: 0; font-size: 16px; color: #B94A24; }
+  .row { display: flex; flex-direction: column; gap: 6px; }
+  .label { font-weight: bold; font-size: 13px; }
+  .modes { display: flex; gap: 8px; }
+  .modes button {
+    flex: 1;
+    padding: 8px;
+    border: 2px solid #D85A30;
+    border-radius: 8px;
+    background: #FFF7F0;
+    color: #B94A24;
+    font-family: inherit;
+    font-weight: bold;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .modes button.active { background: #D2703C; color: #FFF7F0; }
+  input[type=range] { width: 100%; }
+  .value { font-size: 12px; color: #B94A24; }
+  #save {
+    margin-top: 4px;
+    background: #D2703C;
+    color: #FFF7F0;
+    border: none;
+    border-radius: 8px;
+    padding: 9px;
+    font-family: inherit;
+    font-weight: bold;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #save:active { transform: scale(0.98); }
+</style>
+</head>
+<body>
+  <h1>הגדרות החיה</h1>
+
+  <div class="row">
+    <span class="label">מיקום</span>
+    <div class="modes">
+      <button id="modeDesktop" data-mode="desktop">על שולחן העבודה</button>
+      <button id="modeTaskbar" data-mode="taskbar">על שורת המשימות</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <span class="label">כוונון עדין</span>
+    <input id="margin" type="range" min="-80" max="180" value="46" />
+    <span class="value" id="marginValue">46px</span>
+  </div>
+
+  <div class="row">
+    <span class="label">גודל החיה</span>
+    <input id="size" type="range" min="70" max="130" value="100" />
+    <span class="value" id="sizeValue">100%</span>
+  </div>
+
+  <button id="save">סגור ✓</button>
+
+<script>
+  const marginSlider = document.getElementById('margin');
+  const marginValue  = document.getElementById('marginValue');
+  const sizeSlider   = document.getElementById('size');
+  const sizeValue    = document.getElementById('sizeValue');
+  const modeButtons  = [...document.querySelectorAll('.modes button')];
+  const saveBtn      = document.getElementById('save');
+
+  function api() {
+    return (window.pywebview && window.pywebview.api) || null;
+  }
+
+  function setActiveMode(mode) {
+    modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  }
+
+  function seed(cfg) {
+    cfg = cfg || {};
+    const margin = parseInt(cfg.margin, 10);
+    const size   = parseInt(cfg.size, 10) || 100;
+    marginSlider.value = isNaN(margin) ? 46 : margin;
+    marginValue.textContent = marginSlider.value + 'px';
+    sizeSlider.value = size;
+    sizeValue.textContent = size + '%';
+    setActiveMode(cfg.position || 'desktop');
+  }
+
+  // pywebview injects the api asynchronously; wait for it, then load config.
+  window.addEventListener('pywebviewready', () => {
+    if (api() && api().get_pet_config) api().get_pet_config().then(seed);
+  });
+
+  let throttle = null;
+  marginSlider.addEventListener('input', () => {
+    const m = parseInt(marginSlider.value, 10);
+    marginValue.textContent = m + 'px';
+    setActiveMode('custom');
+    if (throttle) return;
+    throttle = setTimeout(() => {
+      if (api() && api().set_margin) api().set_margin(m);
+      throttle = null;
+    }, 40);
+  });
+
+  sizeSlider.addEventListener('input', () => {
+    const pct = parseInt(sizeSlider.value, 10);
+    sizeValue.textContent = pct + '%';
+    if (api() && api().set_size) api().set_size(pct);
+  });
+
+  modeButtons.forEach(b => b.addEventListener('click', () => {
+    setActiveMode(b.dataset.mode);
+    if (api() && api().set_position) {
+      api().set_position(b.dataset.mode).then((margin) => {
+        if (typeof margin === 'number') {
+          marginSlider.value = margin;
+          marginValue.textContent = margin + 'px';
+        }
+      });
+    }
+  }));
+
+  saveBtn.addEventListener('click', () => {
+    if (api() && api().close_settings) api().close_settings();
+  });
+</script>
+</body>
+</html>

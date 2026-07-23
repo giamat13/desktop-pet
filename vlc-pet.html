@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+<meta charset="UTF-8">
+<title>VLC Pet</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+
+  .stage {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background: transparent;
+  }
+
+  #petWrap {
+    transition: transform 0.2s ease-out;
+    transform-origin: center bottom;
+    transform: scale(var(--pet-scale, 1));
+  }
+
+  svg {
+    width: 140px;
+    height: auto;
+    overflow: visible;
+    cursor: pointer;
+  }
+
+  /* ================= shadow ================= */
+  #shadow {
+    transform-origin: 150px 372px;
+    animation: shadowIdle 3.4s ease-in-out infinite;
+  }
+  #shadow.jump { animation: shadowHop 0.62s cubic-bezier(.36,0,.15,1) 1; }
+
+  @keyframes shadowIdle {
+    0%, 100% { transform: scaleX(1);    opacity: 0.32; }
+    50%      { transform: scaleX(0.94); opacity: 0.26; }
+  }
+  @keyframes shadowHop {
+    0%   { transform: scaleX(1);    opacity: 0.35; }
+    30%  { transform: scaleX(0.55); opacity: 0.14; }
+    100% { transform: scaleX(1);    opacity: 0.35; }
+  }
+
+  /* ================= outer group: idle sway (always on) ================= */
+  #cone-root {
+    transform-origin: 150px 372px;
+    animation: idleSway 3.4s ease-in-out infinite;
+  }
+  #cone-root.jump { animation: hopOnce 0.62s cubic-bezier(.36,0,.15,1) 1; }
+
+  @keyframes idleSway {
+    0%, 100% { transform: translateY(0)   rotate(0deg); }
+    50%      { transform: translateY(-4px) rotate(1.2deg); }
+  }
+  @keyframes hopOnce {
+    0%   { transform: translateY(0)     scale(1, 1)      rotate(0deg); }
+    14%  { transform: translateY(2px)   scale(1.07, 0.9)  rotate(0deg); }
+    45%  { transform: translateY(-58px) scale(0.94, 1.08) rotate(-3deg); }
+    72%  { transform: translateY(0)     scale(1.1, 0.88)  rotate(3deg); }
+    86%  { transform: translateY(-5px)  scale(0.98, 1.03) rotate(-1deg); }
+    100% { transform: translateY(0)     scale(1, 1)       rotate(0deg); }
+  }
+
+  /* ================= inner group: hover response ================= */
+  #cone-hover {
+    transform-origin: 150px 372px;
+    transition: transform 0.35s cubic-bezier(.34,1.56,.64,1);
+    cursor: pointer;
+  }
+  #cone-hit:hover #cone-hover {
+    transform: scale(1.055) rotate(-1.5deg);
+  }
+
+  /* eyes widen + glint pops on hover */
+  #face { transition: transform 0.3s ease; transform-origin: 150px 210px; }
+  #cone-hit:hover #face { transform: scale(1.08); }
+
+  /* ================= blink (independent, continuous) ================= */
+  #blink {
+    animation: blink 4.2s ease-in-out infinite;
+    transform-origin: 150px 210px;
+  }
+  @keyframes blink {
+    0%, 92%, 100% { transform: scaleY(1); }
+    95%           { transform: scaleY(0.05); }
+    97%           { transform: scaleY(1); }
+  }
+
+  #glint { animation: sparkle 2.6s ease-in-out infinite; }
+  @keyframes sparkle {
+    0%, 100% { opacity: 0.55; }
+    22%      { opacity: 1; }
+    36%      { opacity: 0.4; }
+  }
+
+  /* little dust puffs on landing */
+  .puff {
+    opacity: 0;
+    transform-origin: center;
+  }
+  .puff.show {
+    animation: puff 0.55s ease-out 1;
+  }
+  @keyframes puff {
+    0%   { opacity: 0;   transform: scale(0.2) translateY(0); }
+    25%  { opacity: 0.55; }
+    100% { opacity: 0;   transform: scale(1.4) translateY(-6px); }
+  }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+<div id="petWrap">
+<svg id="vlcPetSvg" viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bodyGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"  stop-color="#FFB25C"/>
+      <stop offset="35%" stop-color="#FF8A2A"/>
+      <stop offset="70%" stop-color="#F26A00"/>
+      <stop offset="100%" stop-color="#C24E00"/>
+    </linearGradient>
+
+    <linearGradient id="baseGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"  stop-color="#E85E00"/>
+      <stop offset="100%" stop-color="#A83E00"/>
+    </linearGradient>
+
+    <linearGradient id="stripeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"  stop-color="#FFFFFF"/>
+      <stop offset="50%" stop-color="#FFF7EC"/>
+      <stop offset="100%" stop-color="#F2E4D0"/>
+    </linearGradient>
+
+    <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="cheekGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF6B5C" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#FF6B5C" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="puffGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFE3BE" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#FFE3BE" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ground shadow -->
+  <ellipse id="shadow" cx="150" cy="374" rx="72" ry="14" fill="url(#shadowGrad)"/>
+
+  <!-- landing dust puffs -->
+  <circle class="puff" id="puffL" cx="108" cy="360" r="16" fill="url(#puffGrad)"/>
+  <circle class="puff" id="puffR" cx="192" cy="360" r="16" fill="url(#puffGrad)"/>
+
+  <g id="cone-root">
+   <g id="cone-hit">
+    <!-- invisible larger hit-area so hover/click feel generous -->
+    <rect x="40" y="0" width="220" height="400" fill="transparent"/>
+    <g id="cone-hover">
+
+      <!-- base plate -->
+      <g>
+        <rect x="70" y="352" width="160" height="22" rx="6" fill="url(#baseGrad)"/>
+        <rect x="70" y="352" width="160" height="7" rx="3" fill="#FF9640" opacity="0.6"/>
+      </g>
+
+      <!-- cone body -->
+      <path d="M150 40 L206 352 L94 352 Z"
+            fill="url(#bodyGrad)" stroke="#8A3300" stroke-width="2" stroke-linejoin="round"/>
+
+      <path d="M150 40 L94 352 L110 352 L150 60 Z" fill="#000000" opacity="0.14"/>
+      <path d="M150 40 L206 352 L192 352 L150 60 Z" fill="#FFFFFF" opacity="0.12"/>
+
+      <path d="M133 150 L167 150 L182 210 L118 210 Z" fill="url(#stripeGrad)" stroke="#D8C7AE" stroke-width="1.5"/>
+      <path d="M104 280 L196 280 L206 320 L94 320 Z" fill="url(#stripeGrad)" stroke="#D8C7AE" stroke-width="1.5"/>
+
+      <ellipse cx="120" cy="300" rx="5" ry="8" fill="#8A3300" opacity="0.25"/>
+      <ellipse cx="178" cy="255" rx="4" ry="6" fill="#8A3300" opacity="0.2"/>
+
+      <ellipse cx="150" cy="40" rx="14" ry="12" fill="#FFC98A"/>
+      <ellipse cx="150" cy="36" rx="8" ry="6" fill="#FFFFFF" opacity="0.7"/>
+
+      <g id="face">
+        <ellipse cx="112" cy="222" rx="14" ry="9" fill="url(#cheekGrad)"/>
+        <ellipse cx="188" cy="222" rx="14" ry="9" fill="url(#cheekGrad)"/>
+
+        <g id="blink">
+          <ellipse cx="132" cy="210" rx="11" ry="13" fill="#241505"/>
+          <ellipse cx="168" cy="210" rx="11" ry="13" fill="#241505"/>
+          <circle id="glint" cx="128" cy="205" r="3.4" fill="#FFFFFF"/>
+          <circle cx="164" cy="205" r="3.4" fill="#FFFFFF" opacity="0.9"/>
+        </g>
+
+        <path d="M124 234 Q150 252 176 234" stroke="#241505" stroke-width="5" fill="none" stroke-linecap="round"/>
+      </g>
+    </g>
+   </g>
+  </g>
+</svg>
+</div>
+</div>
+
+<script>
+  const pet      = document.getElementById('vlcPetSvg');
+  const petWrap  = document.getElementById('petWrap');
+  const coneRoot = document.getElementById('cone-root');
+  const shadow   = document.getElementById('shadow');
+  const puffL    = document.getElementById('puffL');
+  const puffR    = document.getElementById('puffR');
+
+  // Callable from Python (settings window) to live-resize the pet.
+  function applyPetScale(pct) {
+    petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
+  }
+
+  // Seed size from saved config once the bridge is ready.
+  window.addEventListener('pywebviewready', () => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_pet_config) {
+      window.pywebview.api.get_pet_config().then((cfg) => {
+        if (cfg && cfg.size) applyPetScale(cfg.size);
+      });
+    }
+  });
+
+  function triggerJump() {
+    // restart even if mid-jump: strip classes, force reflow, re-add
+    coneRoot.classList.remove('jump');
+    shadow.classList.remove('jump');
+    puffL.classList.remove('show');
+    puffR.classList.remove('show');
+    void coneRoot.offsetWidth; // reflow trick to allow re-trigger
+
+    coneRoot.classList.add('jump');
+    shadow.classList.add('jump');
+
+    // puffs appear right around landing
+    setTimeout(() => {
+      puffL.classList.add('show');
+      puffR.classList.add('show');
+    }, 430);
+  }
+
+  coneRoot.addEventListener('animationend', (e) => {
+    if (e.animationName === 'hopOnce') {
+      coneRoot.classList.remove('jump');
+      shadow.classList.remove('jump');
+    }
+  });
+
+  function handlePetClick() {
+    triggerJump();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_app) {
+      window.pywebview.api.open_app();
+    }
+  }
+
+  // ---- drag & drop (moves the actual native window via Python) --------
+  let dragStartX, dragStartY, isDragging = false, movedDistance = 0;
+  const DRAG_THRESHOLD = 6;
+
+  pet.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) {           // middle/right must not start a drag
+      if (e.button === 1) e.preventDefault();  // block middle-click autoscroll
+      return;
+    }
+    dragStartX = e.screenX;
+    dragStartY = e.screenY;
+    movedDistance = 0;
+    isDragging = false;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+      window.pywebview.api.start_drag();
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (dragStartX === undefined) return;
+    const dx = e.screenX - dragStartX;
+    const dy = e.screenY - dragStartY;
+    movedDistance += Math.abs(dx) + Math.abs(dy);
+    if (movedDistance > DRAG_THRESHOLD) {
+      isDragging = true;
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_move) {
+        window.pywebview.api.drag_move(dx, dy);
+      }
+      dragStartX = e.screenX;
+      dragStartY = e.screenY;
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragStartX === undefined) return;
+    if (isDragging) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
+        window.pywebview.api.drop();
+      }
+    } else {
+      handlePetClick();
+    }
+    dragStartX = undefined;
+    isDragging = false;
+  });
+
+  // Middle-click (scroll-wheel click) the pet -> open the native settings window.
+  pet.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings_window) {
+      window.pywebview.api.open_settings_window();
+    }
+  });
+</script>
+</body>
+</html>
