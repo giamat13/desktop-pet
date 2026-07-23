@@ -52,7 +52,8 @@ def log(*args):
         pass  # logging must never itself raise
 
 
-def load_config():
+def _load_all_config():
+    """Raw file contents: {pet_key: {taskbar_margin, size, position}, ...}."""
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -60,30 +61,35 @@ def load_config():
         return {}
 
 
-def save_config(cfg):
+def _save_all_config(all_cfg):
     try:
         os.makedirs(CONFIG_DIR, exist_ok=True)
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f)
+            json.dump(all_cfg, f)
     except Exception as exc:
         log("save_config failed:", exc)
 
 
-def update_config(**changes):
-    """Merge changes into config without clobbering unrelated keys."""
-    cfg = load_config()
-    cfg.update(changes)
-    save_config(cfg)
+def load_config(pet):
+    """Each pet (claude/vlc) keeps its own margin/size/position settings."""
+    return _load_all_config().get(pet, {})
 
 
-def get_margin():
+def update_config(pet, **changes):
+    """Merge changes into one pet's config section without touching others."""
+    all_cfg = _load_all_config()
+    all_cfg.setdefault(pet, {}).update(changes)
+    _save_all_config(all_cfg)
+
+
+def get_margin(pet):
     """
     The vertical distance (px) the pet should rest above the bottom of the
     screen. Prefers the value the user calibrated by hand (most reliable,
     since taskbar auto-location can be off with some themes/scaling), and
     only falls back to an automatic OS guess if nothing was calibrated yet.
     """
-    cfg = load_config()
+    cfg = load_config(pet)
     if "taskbar_margin" in cfg:
         return cfg["taskbar_margin"]
     return get_taskbar_height()
@@ -387,18 +393,18 @@ def hide_from_taskbar(title):
     threading.Thread(target=_apply, daemon=True).start()
 
 
-def get_pet_config():
+def get_pet_config(pet):
     """Everything the pet / settings pages need to render themselves."""
-    cfg = load_config()
+    cfg = load_config(pet)
     return {
-        "margin": get_margin(),
+        "margin": get_margin(pet),
         "size": cfg.get("size", 100),
         "position": cfg.get("position", "taskbar"),
     }
 
 
 class Api:
-    def __init__(self, screen_h, open_target, window_title):
+    def __init__(self, screen_h, open_target, window_title, pet):
         # NOTE: must stay underscore-prefixed. pywebview introspects every
         # public attribute of the js_api object to expose it to JS, and would
         # otherwise recurse forever into window.native.AccessibilityObject
@@ -407,6 +413,7 @@ class Api:
         self._window = None
         self._open_target = open_target  # callable that opens the fronted app
         self._window_title = window_title  # for FindWindow-based z-order/taskbar calls
+        self._pet = pet  # config namespace: "claude" or "vlc" - each keeps its own settings
         self._settings_window = None
         self.dragging = False
         self.screen_h = screen_h
@@ -424,14 +431,14 @@ class Api:
         pushing into JS via evaluate_js from the "loaded" event) can deadlock
         the GUI thread. The page calls this once pywebview.api is ready.
         """
-        return get_pet_config()
+        return get_pet_config(self._pet)
 
     def open_settings_window(self):
         """Middle-click the pet -> open settings in its own native window."""
         try:
             if self._settings_window is not None:
                 return  # already open
-            sapi = SettingsApi(self._window, self.screen_h, self._window_title)
+            sapi = SettingsApi(self._window, self.screen_h, self._window_title, self._pet)
             sw = webview.create_window(
                 title="הגדרות",
                 url=SETTINGS_PATH,
@@ -466,7 +473,7 @@ class Api:
         self.dragging = False
         # Desktop mode: the pet stays wherever it's dropped (it lives on the
         # wallpaper). Only taskbar mode snaps back down onto the taskbar.
-        if load_config().get("position", "taskbar") != "desktop":
+        if load_config(self._pet).get("position", "taskbar") != "desktop":
             threading.Thread(target=self._fall, daemon=True).start()
 
     def _fall(self):
@@ -474,7 +481,7 @@ class Api:
             return
         try:
             screen_w, screen_h = get_screen_size()
-            target_y = screen_h - WIN_H - get_margin()
+            target_y = screen_h - WIN_H - get_margin(self._pet)
             x = min(max(0, self._window.x), max(0, screen_w - WIN_W))
             y = self._window.y
             self._window.move(int(x), int(y))
@@ -490,14 +497,15 @@ class Api:
 class SettingsApi:
     """js_api for the separate settings window. Edits the pet live + persists."""
 
-    def __init__(self, pet_window, screen_h, pet_window_title):
+    def __init__(self, pet_window, screen_h, pet_window_title, pet):
         self._window = None          # the settings window itself
         self._pet_window = pet_window
         self._pet_window_title = pet_window_title
+        self._pet = pet  # config namespace: "claude" or "vlc"
         self.screen_h = screen_h
 
     def get_pet_config(self):
-        return get_pet_config()
+        return get_pet_config(self._pet)
 
     def _move_pet(self, margin):
         if not self._pet_window:
@@ -513,7 +521,7 @@ class SettingsApi:
         try:
             margin = int(margin)
             self._move_pet(margin)
-            update_config(taskbar_margin=margin)
+            update_config(self._pet, taskbar_margin=margin)
         except Exception as exc:
             log("set_margin failed:", exc)
 
@@ -526,11 +534,11 @@ class SettingsApi:
         """
         try:
             desktop = (mode == "desktop")
-            update_config(position="desktop" if desktop else "taskbar")
+            update_config(self._pet, position="desktop" if desktop else "taskbar")
             apply_zorder(self._pet_window_title, desktop)
             if desktop:
                 return None
-            margin = get_margin()
+            margin = get_margin(self._pet)
             self._move_pet(margin)
             return margin
         except Exception as exc:
@@ -541,7 +549,7 @@ class SettingsApi:
         """Relay size to the pet page (evaluate_js is safe from a click)."""
         try:
             pct = int(pct)
-            update_config(size=pct)
+            update_config(self._pet, size=pct)
             if self._pet_window:
                 self._pet_window.evaluate_js(f"applyPetScale({pct})")
         except Exception as exc:
@@ -563,17 +571,16 @@ def main():
     pets = [arg] if arg in PETS else list(PETS)
 
     screen_w, screen_h = get_screen_size()
-    margin = get_margin()
     gap = 20
-    start_y = screen_h - WIN_H - margin
     start_x = screen_w - len(pets) * (WIN_W + gap) - 60
 
     for i, pet in enumerate(pets):
         html_path = os.path.join(APP_DIR, PETS[pet])
         open_target = launch_vlc if pet == "vlc" else launch_claude_desktop
         window_title = "VLC Pet" if pet == "vlc" else "Desktop Pet"
+        start_y = screen_h - WIN_H - get_margin(pet)
 
-        api = Api(screen_h, open_target, window_title)
+        api = Api(screen_h, open_target, window_title, pet)
 
         window = webview.create_window(
             title=window_title,
@@ -591,10 +598,10 @@ def main():
         )
         api._window = window
 
-        def _on_loaded(window_title=window_title):
+        def _on_loaded(window_title=window_title, pet=pet):
             if sys.platform == "win32":
                 hide_from_taskbar(window_title)
-                if load_config().get("position", "taskbar") == "desktop":
+                if load_config(pet).get("position", "taskbar") == "desktop":
                     apply_zorder(window_title, desktop=True)
 
         window.events.loaded += _on_loaded
