@@ -15,12 +15,12 @@ import threading
 import webview
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-SETTINGS_PATH = os.path.join(APP_DIR, "settings.html")
+SETTINGS_PATH = os.path.join(APP_DIR, "pets", "settings.html")
 
 # Which pet to run: `python pet_app.py [claude|vlc]` (default claude).
 PETS = {
-    "claude": "claude_pet.html",
-    "vlc": "vlc-pet.html",
+    "claude": "pets/claude_pet.html",
+    "vlc": "pets/vlc-pet.html",
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip

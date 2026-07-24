@@ -36,9 +36,7 @@ Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" 
     ForEach-Object { Write-Host "Stopping running Desktop Pet (pid $($_.ProcessId))..."; Stop-Process -Id $_.ProcessId -Force }
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-Copy-Item -Path "$PSScriptRoot\claude_pet.html" -Destination $installDir -Force
-Copy-Item -Path "$PSScriptRoot\vlc-pet.html" -Destination $installDir -Force
-Copy-Item -Path "$PSScriptRoot\settings.html" -Destination $installDir -Force
+Copy-Item -Path "$PSScriptRoot\pets" -Destination $installDir -Recurse -Force
 Copy-Item -Path "$PSScriptRoot\pet_app.py" -Destination $installDir -Force
 
 $startupFolder = [Environment]::GetFolderPath("Startup")
