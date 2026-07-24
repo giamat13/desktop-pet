@@ -337,8 +337,7 @@ def apply_zorder(title, desktop):
 
     desktop=True  -> HWND_BOTTOM: drops the topmost flag and sinks the pet to
                      the bottom of the stack, so it lives at the wallpaper
-                     level and is only visible when every window is minimized
-                     (i.e. the desktop is showing).
+                     level and is only visible when the desktop is showing.
     desktop=False -> HWND_TOPMOST: the classic always-on-taskbar behavior.
     """
     if sys.platform != "win32":
@@ -475,6 +474,12 @@ class Api:
         # wallpaper). Only taskbar mode snaps back down onto the taskbar.
         if load_config(self._pet).get("position", "taskbar") != "desktop":
             threading.Thread(target=self._fall, daemon=True).start()
+        else:
+            # Remember exactly where it was dropped so it reappears there after a restart.
+            try:
+                update_config(self._pet, x=int(self._window.x), y=int(self._window.y))
+            except Exception as exc:
+                log("drop save position failed:", exc)
 
     def _fall(self):
         if not self._window:
@@ -490,6 +495,8 @@ class Api:
                 y = min(target_y, y + step)
                 self._window.move(int(x), int(y))
                 time.sleep(0.016)
+            # Remember horizontal spot across restarts (y is derived from the margin).
+            update_config(self._pet, x=int(x))
         except Exception as exc:
             log("_fall failed:", exc)
 
@@ -575,10 +582,17 @@ def main():
     start_x = screen_w - len(pets) * (WIN_W + gap) - 60
 
     for i, pet in enumerate(pets):
+        cfg = load_config(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
         open_target = launch_vlc if pet == "vlc" else launch_claude_desktop
         window_title = "VLC Pet" if pet == "vlc" else "Desktop Pet"
-        start_y = screen_h - WIN_H - get_margin(pet)
+
+        # Reopen where the user last left it; fall back to the side-by-side layout.
+        default_x = start_x + i * (WIN_W + gap)
+        resting_y = screen_h - WIN_H - get_margin(pet)
+        win_x = cfg.get("x", default_x)
+        # Taskbar pets always rest on the taskbar; only desktop pets keep a free y.
+        win_y = cfg.get("y", resting_y) if cfg.get("position") == "desktop" else resting_y
 
         api = Api(screen_h, open_target, window_title, pet)
 
@@ -587,8 +601,8 @@ def main():
             url=html_path,
             width=WIN_W,
             height=WIN_H,
-            x=start_x + i * (WIN_W + gap),
-            y=start_y,
+            x=int(win_x),
+            y=int(win_y),
             frameless=True,
             easy_drag=False,
             on_top=True,
