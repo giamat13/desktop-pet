@@ -442,15 +442,21 @@ def desktop_is_showing(ignore_hwnd=0):
     Is the desktop itself currently on show (WIN+D, "Show desktop", or every
     window minimized)?
 
-    Decided from the Z-order rather than the focus, because focus is not a
-    reliable signal: GetForegroundWindow() becomes Progman on a manual
-    minimize-all but NOT on WIN+D, so a focus-based check silently misses the
-    case it exists for.
+    Two signals, OR'd:
 
-    Walks top-level windows downwards from the top; whichever comes first
-    settles it - the wallpaper above every app means the desktop is showing, a
-    real app window first means it is not. Normally stops after a handful of
-    windows, since the top of the stack is where the apps are.
+    1) Z-order: walk top-level windows downwards from the top; whichever comes
+       first settles it - the wallpaper above every app means the desktop is
+       showing, a real app window first means it is not.
+    2) Focus: GetForegroundWindow() is Progman/WorkerW.
+
+    An earlier version used Z-order only, on the theory that focus was
+    unreliable for WIN+D specifically - based on a test where synthetic input
+    (Shell.Application.ToggleDesktop() / keybd_event from a spawned process)
+    moved the Z-order but not the focus. That was an artifact of the test, not
+    of WIN+D: Windows' foreground-lock rules let a genuine physical keypress
+    move focus in cases where injected input from another process is refused.
+    Live testing showed real WIN+D behaving differently from either signal
+    alone, so both are checked and either is enough.
     """
     if sys.platform != "win32":
         return False
@@ -483,10 +489,17 @@ def desktop_is_showing(ignore_hwnd=0):
             if h == progman:
                 return True
             if _is_app_window(h):
-                return False
+                break  # a real app is in front by z-order; fall through to the focus check
             h = win32gui.GetWindow(h, win32con.GW_HWNDNEXT)
     except Exception as exc:
-        log("desktop_is_showing failed:", exc)
+        log("desktop_is_showing z-order check failed:", exc)
+
+    try:
+        fg = win32gui.GetForegroundWindow()
+        if fg and fg != ignore_hwnd and win32gui.GetClassName(fg) in ("Progman", "WorkerW"):
+            return True
+    except Exception as exc:
+        log("desktop_is_showing focus check failed:", exc)
     return False
 
 
@@ -537,12 +550,7 @@ def sync_desktop_visibility(hwnd, pet):
                         # switched to taskbar mode - hand the window back visible
                         show_window_async(hwnd, win32con.SW_SHOWNA)
                         return
-                    # Flipped per live on-screen testing: this instrumented
-                    # check kept reading correctly (hidden with apps up, shown
-                    # on WIN+D) yet the user watching the real screen saw the
-                    # opposite every time - so the ground truth they can see
-                    # wins over what this process can measure of itself.
-                    want = not desktop_is_showing(ignore_hwnd=hwnd)
+                    want = desktop_is_showing(ignore_hwnd=hwnd)
                     if want != shown:
                         shown = want
                         show_window_async(hwnd, win32con.SW_SHOWNA if want else win32con.SW_HIDE)
