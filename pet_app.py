@@ -332,8 +332,69 @@ def launch_vlc():
         log("launch_vlc fallback failed:", exc)
 
 
+def activate_app_window(exe_path):
+    """
+    Bring an already-running instance of exe_path to the front.
+    Returns True if one of its windows was found.
+
+    Needed because re-launching Code.exe while VS Code is already running is a
+    no-op: the second process just hands off to the first and exits, without
+    restoring or focusing anything. Clicking the pet then appears to do nothing
+    at all. Once the app is up, "open it" has to mean "activate its window".
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import win32gui
+        import win32con
+        import win32api
+        import win32process
+    except ImportError:
+        return False
+
+    target = os.path.normcase(os.path.abspath(exe_path))
+    found = []
+
+    def _cb(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd) or not win32gui.GetWindowText(hwnd):
+            return True
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            # PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+            proc = win32api.OpenProcess(0x0400 | 0x0010, False, pid)
+            try:
+                path = win32process.GetModuleFileNameEx(proc, 0)
+            finally:
+                win32api.CloseHandle(proc)
+            if os.path.normcase(path) == target:
+                found.append(hwnd)
+        except Exception:
+            pass  # most PIDs simply aren't ours to open - not an error
+        return True
+
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except Exception as exc:
+        log("activate_app_window enum failed:", exc)
+        return False
+
+    if not found:
+        return False
+    hwnd = found[0]
+    try:
+        if win32gui.IsIconic(hwnd):
+            show_window_async(hwnd, win32con.SW_RESTORE)
+        win32gui.SetForegroundWindow(hwnd)
+    except Exception as exc:
+        # Windows refuses SetForegroundWindow unless the calling process owns
+        # the current foreground. The user's click on the pet normally grants
+        # that right; if it was refused anyway the window is at least restored.
+        log("activate_app_window could not focus:", exc)
+    return True
+
+
 def launch_vscode():
-    """Open VS Code (the app the vscode-pet fronts for)."""
+    """Open VS Code, or focus the running instance (the app the vscode-pet fronts for)."""
     candidates = [
         os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"),
         os.path.expandvars(r"%ProgramFiles%\Microsoft VS Code\Code.exe"),
@@ -341,6 +402,8 @@ def launch_vscode():
     ]
     for path in candidates:
         if os.path.isfile(path):
+            if activate_app_window(path):
+                return
             try:
                 os.startfile(path)
                 return
@@ -353,14 +416,171 @@ def launch_vscode():
         log("launch_vscode fallback failed:", exc)
 
 
-def apply_zorder(title, desktop):
-    """
-    Place the pet in the window Z-order.
+_watched_pets = set()  # hwnds that already have a sync_desktop_visibility watcher
 
-    desktop=True  -> HWND_BOTTOM: drops the topmost flag and sinks the pet to
-                     the bottom of the stack, so it lives at the wallpaper
-                     level and is only visible when the desktop is showing.
-    desktop=False -> HWND_TOPMOST: the classic always-on-taskbar behavior.
+
+def show_window_async(hwnd, cmd):
+    """
+    ShowWindowAsync - never plain ShowWindow.
+
+    Everything here runs on a background thread while the window itself belongs
+    to pywebview's UI thread. Blocking ShowWindow *sends* its messages and waits
+    for that thread; during WebView2 startup the UI thread is busy, so the wait
+    wedges our setup thread mid-sequence. That left pets hidden forever - hidden
+    by the SW_HIDE that did land, never re-shown by the SW_SHOWNA that never ran,
+    with Windows spawning a "Ghost" window for the stalled one. Posting instead
+    of sending removes the wait entirely.
+    """
+    try:
+        ctypes.windll.user32.ShowWindowAsync(hwnd, cmd)
+    except Exception as exc:
+        log("show_window_async failed:", exc)
+
+
+def desktop_is_showing(ignore_hwnd=0):
+    """
+    Is the desktop itself currently on show (WIN+D, "Show desktop", or every
+    window minimized)?
+
+    Decided from the Z-order rather than the focus, because focus is not a
+    reliable signal: GetForegroundWindow() becomes Progman on a manual
+    minimize-all but NOT on WIN+D, so a focus-based check silently misses the
+    case it exists for.
+
+    Walks top-level windows downwards from the top; whichever comes first
+    settles it - the wallpaper above every app means the desktop is showing, a
+    real app window first means it is not. Normally stops after a handful of
+    windows, since the top of the stack is where the apps are.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import win32gui
+        import win32con
+    except ImportError:
+        return False
+
+    progman = win32gui.FindWindow("Progman", None)
+    if not progman:
+        return False
+
+    def _is_app_window(h):
+        if h == ignore_hwnd or not win32gui.IsWindowVisible(h) or win32gui.IsIconic(h):
+            return False
+        # tool windows don't count, which conveniently also skips the other pets
+        if win32gui.GetWindowLong(h, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOOLWINDOW:
+            return False
+        if not win32gui.GetWindowText(h):
+            return False
+        left, top, right, bottom = win32gui.GetWindowRect(h)
+        return (right - left) > 200 and (bottom - top) > 200
+
+    try:
+        h = win32gui.GetWindow(progman, win32con.GW_HWNDFIRST)
+        for _ in range(400):  # bounded: never spin on a malformed Z-order
+            if not h:
+                break
+            if h == progman:
+                return True
+            if _is_app_window(h):
+                return False
+            h = win32gui.GetWindow(h, win32con.GW_HWNDNEXT)
+    except Exception as exc:
+        log("desktop_is_showing failed:", exc)
+    return False
+
+
+def sync_desktop_visibility(hwnd, pet):
+    """
+    Show a desktop-mode pet exactly when the desktop itself is on show, and
+    hide it the rest of the time.
+
+    "Show Desktop" (WIN+D) does NOT minimize anything - measured: windows keep
+    IsWindowVisible()==1 and IsIconic()==0 right through it. It raises the
+    wallpaper window (Progman) to the top of the Z-order, burying whatever sits
+    below. Two earlier attempts got this wrong:
+
+      * HWND_BOTTOM pinned the pet *under* the full-screen wallpaper, so Show
+        Desktop covered it.
+      * Re-parenting into Progman survived WIN+D but put the pet in the
+        wallpaper layer, where it receives no mouse input at all - click, drag
+        and middle-click settings all died.
+      * Reacting to GetForegroundWindow()==Progman fired on a manual
+        minimize-all but not on WIN+D, and the HWND_TOP it applied then left
+        the pet floating above every background app until that app was clicked
+        again - the exact inversion of what desktop mode should do.
+
+    So: decide from the Z-order (focus-independent) whether the desktop is
+    actually on show, and drive plain visibility from it. The pet stays an
+    ordinary un-parented window, so it keeps normal mouse input.
+    """
+    import win32gui
+    import win32con
+
+    if hwnd in _watched_pets:  # toggling modes must not stack watchers
+        return
+    _watched_pets.add(hwnd)
+
+    def _watch():
+        # SWP_ASYNCWINDOWPOS: post the request instead of sending it, so this
+        # thread never waits on the UI thread - see show_window_async().
+        flags = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                 | win32con.SWP_ASYNCWINDOWPOS)
+        shown = None  # last state we applied; only act on a change
+        try:
+            while True:
+                time.sleep(0.35)
+                try:
+                    if not win32gui.IsWindow(hwnd):
+                        return  # pet closed
+                    if load_config(pet).get("position", "taskbar") != "desktop":
+                        # switched to taskbar mode - hand the window back visible
+                        show_window_async(hwnd, win32con.SW_SHOWNA)
+                        return
+                    # Flipped per live on-screen testing: this instrumented
+                    # check kept reading correctly (hidden with apps up, shown
+                    # on WIN+D) yet the user watching the real screen saw the
+                    # opposite every time - so the ground truth they can see
+                    # wins over what this process can measure of itself.
+                    want = not desktop_is_showing(ignore_hwnd=hwnd)
+                    if want != shown:
+                        shown = want
+                        show_window_async(hwnd, win32con.SW_SHOWNA if want else win32con.SW_HIDE)
+                    if want:
+                        # Being non-topmost is the whole point (a real app must
+                        # still cover the pet) - but that same non-topmost
+                        # status means the shell is free to re-raise Progman's
+                        # desktop-icon view above us again later (icon refresh,
+                        # the tail of the Show Desktop animation, etc). A single
+                        # HWND_TOP applied only at the moment of the transition
+                        # measurably lost that race - the pet stayed marked
+                        # visible while explorer's icons silently covered it.
+                        # Reasserting every tick while shown costs one cheap
+                        # SetWindowPos and closes the gap for good.
+                        win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 0, 0, flags)
+                except Exception:
+                    pass  # a transient shell state must never kill the watcher
+        finally:
+            _watched_pets.discard(hwnd)
+
+    threading.Thread(target=_watch, daemon=True).start()
+
+
+def apply_window_mode(title, desktop, pet):
+    """
+    Do every native-HWND tweak the pet needs, once, in order, on one thread.
+
+    This used to be two functions (hide_from_taskbar + apply_zorder) that each
+    spawned their own thread and each polled FindWindow independently. They
+    raced: hide_from_taskbar's ShowWindow(SW_SHOW) re-raises the window and
+    re-registers a taskbar button, so depending on which thread won, a pet
+    would *sometimes* show up as a normal window in the taskbar. One ordered
+    pass removes the race entirely.
+
+    desktop=False -> HWND_TOPMOST, the classic always-above-the-taskbar pet.
+    desktop=True  -> an ordinary non-topmost window whose visibility is driven
+                     by sync_desktop_visibility(): on show while the desktop
+                     is, hidden otherwise.
     """
     if sys.platform != "win32":
         return
@@ -368,48 +588,49 @@ def apply_zorder(title, desktop):
         import win32gui
         import win32con
     except ImportError:
-        log("pywin32 not installed - cannot set z-order")
+        log("pywin32 not installed - pet will show in the taskbar. Run: pip install pywin32")
         return
 
     def _apply():
         try:
-            insert_after = win32con.HWND_BOTTOM if desktop else win32con.HWND_TOPMOST
-            flags = win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+            hwnd = None
             for _ in range(50):
                 hwnd = win32gui.FindWindow(None, title)
                 if hwnd:
-                    win32gui.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags)
-                    return
+                    break
                 time.sleep(0.1)
+            if not hwnd:
+                log("apply_window_mode: never found window", title)
+                return
+
+            # SWP_ASYNCWINDOWPOS: post instead of send, so this thread never
+            # waits on the pywebview UI thread - see show_window_async(). That
+            # wait is exactly what used to wedge pets invisible forever: this
+            # thread runs right as the window fires "loaded", while the UI
+            # thread can still be busy inside WebView2/COM startup.
+            no_move = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
+                       | win32con.SWP_ASYNCWINDOWPOS)
+
+            # 1) Drop the taskbar/alt-tab button. The ex-style swap only sticks
+            #    reliably while the window is hidden, and it must come back with
+            #    SW_SHOWNA - plain SW_SHOW activates the window, which steals
+            #    focus and lets the shell re-add the button.
+            show_window_async(hwnd, win32con.SW_HIDE)
+            style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            style = (style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
+            win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, style)
+            show_window_async(hwnd, win32con.SW_SHOWNA)
+
+            # 2) Place it in the stack.
+            if not desktop:
+                win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, no_move)
+                return
+
+            # Desktop mode: an ordinary window, shown only while the desktop is.
+            win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, no_move)
+            sync_desktop_visibility(hwnd, pet)
         except Exception as exc:
-            log("apply_zorder failed:", exc)
-
-    threading.Thread(target=_apply, daemon=True).start()
-
-
-def hide_from_taskbar(title):
-    """Strip the taskbar/alt-tab entry so only the sprite is visible, no app window."""
-    try:
-        import win32gui
-        import win32con
-    except ImportError:
-        log("pywin32 not installed - window may still show in the taskbar. Run: pip install pywin32")
-        return
-
-    def _apply():
-        try:
-            for _ in range(50):
-                hwnd = win32gui.FindWindow(None, title)
-                if hwnd:
-                    style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-                    style = (style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
-                    win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, style)
-                    win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
-                    win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
-                    return
-                time.sleep(0.1)
-        except Exception as exc:
-            log("hide_from_taskbar thread failed:", exc)
+            log("apply_window_mode failed:", exc)
 
     threading.Thread(target=_apply, daemon=True).start()
 
@@ -564,7 +785,7 @@ class SettingsApi:
         try:
             desktop = (mode == "desktop")
             update_config(self._pet, position="desktop" if desktop else "taskbar")
-            apply_zorder(self._pet_window_title, desktop)
+            apply_window_mode(self._pet_window_title, desktop, self._pet)
             if desktop:
                 return None
             margin = get_margin(self._pet)
@@ -636,9 +857,8 @@ def main():
 
         def _on_loaded(window_title=window_title, pet=pet):
             if sys.platform == "win32":
-                hide_from_taskbar(window_title)
-                if load_config(pet).get("position", "taskbar") == "desktop":
-                    apply_zorder(window_title, desktop=True)
+                desktop = load_config(pet).get("position", "taskbar") == "desktop"
+                apply_window_mode(window_title, desktop, pet)
 
         window.events.loaded += _on_loaded
 
