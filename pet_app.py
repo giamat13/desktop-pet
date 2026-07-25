@@ -22,6 +22,8 @@ PETS = {
     "claude": "pets/claude_pet.html",
     "vlc": "pets/vlc-pet.html",
     "vscode": "pets/vscode-pet.html",
+    "curseforge": "pets/curseforge-pet.html",
+    "chrome": "pets/chrome-pet.html",
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
@@ -414,6 +416,49 @@ def launch_vscode():
         os.startfile("code")
     except Exception as exc:
         log("launch_vscode fallback failed:", exc)
+
+
+def launch_curseforge():
+    """Open CurseForge, or focus the running instance (the app the curseforge-pet fronts for)."""
+    candidates = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\curseforge\CurseForge.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Overwolf\CurseForge\CurseForge.exe"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            if activate_app_window(path):
+                return
+            try:
+                os.startfile(path)
+                return
+            except Exception as exc:
+                log("launch_curseforge failed:", exc)
+    try:
+        os.startfile("curseforge")
+    except Exception as exc:
+        log("launch_curseforge fallback failed:", exc)
+
+
+def launch_chrome():
+    """Open Google Chrome, or focus the running instance (the app the chrome-pet fronts for)."""
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            if activate_app_window(path):
+                return
+            try:
+                os.startfile(path)
+                return
+            except Exception as exc:
+                log("launch_chrome failed:", exc)
+    try:
+        os.startfile("chrome")
+    except Exception as exc:
+        log("launch_chrome fallback failed:", exc)
 
 
 _watched_pets = set()  # hwnds that already have a sync_desktop_visibility watcher
@@ -825,8 +870,8 @@ def main():
     for i, pet in enumerate(pets):
         cfg = load_config(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
-        open_target = {"vlc": launch_vlc, "vscode": launch_vscode}.get(pet, launch_claude_desktop)
-        window_title = {"vlc": "VLC Pet", "vscode": "VS Code Pet"}.get(pet, "Desktop Pet")
+        open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge, "chrome": launch_chrome}.get(pet, launch_claude_desktop)
+        window_title = {"vlc": "VLC Pet", "vscode": "VS Code Pet", "curseforge": "CurseForge Pet", "chrome": "Chrome Pet"}.get(pet, "Desktop Pet")
 
         # Reopen where the user last left it; fall back to the side-by-side layout.
         default_x = start_x + i * (WIN_W + gap)
