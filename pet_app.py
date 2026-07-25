@@ -21,6 +21,7 @@ SETTINGS_PATH = os.path.join(APP_DIR, "pets", "settings.html")
 PETS = {
     "claude": "pets/claude_pet.html",
     "vlc": "pets/vlc-pet.html",
+    "vscode": "pets/vscode-pet.html",
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
@@ -331,6 +332,27 @@ def launch_vlc():
         log("launch_vlc fallback failed:", exc)
 
 
+def launch_vscode():
+    """Open VS Code (the app the vscode-pet fronts for)."""
+    candidates = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"),
+        os.path.expandvars(r"%ProgramFiles%\Microsoft VS Code\Code.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft VS Code\Code.exe"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                os.startfile(path)
+                return
+            except Exception as exc:
+                log("launch_vscode failed:", exc)
+    # Fall back to the "code" launcher on PATH.
+    try:
+        os.startfile("code")
+    except Exception as exc:
+        log("launch_vscode fallback failed:", exc)
+
+
 def apply_zorder(title, desktop):
     """
     Place the pet in the window Z-order.
@@ -584,8 +606,8 @@ def main():
     for i, pet in enumerate(pets):
         cfg = load_config(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
-        open_target = launch_vlc if pet == "vlc" else launch_claude_desktop
-        window_title = "VLC Pet" if pet == "vlc" else "Desktop Pet"
+        open_target = {"vlc": launch_vlc, "vscode": launch_vscode}.get(pet, launch_claude_desktop)
+        window_title = {"vlc": "VLC Pet", "vscode": "VS Code Pet"}.get(pet, "Desktop Pet")
 
         # Reopen where the user last left it; fall back to the side-by-side layout.
         default_x = start_x + i * (WIN_W + gap)

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+<meta charset="UTF-8">
+<title>VS Code Pet</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+
+  .stage {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background: transparent;
+  }
+
+  #petWrap {
+    transition: transform 0.2s ease-out;
+    transform-origin: center bottom;
+    transform: scale(var(--pet-scale, 1));
+  }
+
+  svg {
+    width: 140px;
+    height: auto;
+    overflow: visible;
+    cursor: pointer;
+  }
+
+  /* ================= shadow ================= */
+  #shadow {
+    transform-origin: 150px 231px;
+    animation: shadowIdle 3.4s ease-in-out infinite;
+  }
+  #shadow.jump { animation: shadowHop 0.62s cubic-bezier(.36,0,.15,1) 1; }
+
+  @keyframes shadowIdle {
+    0%, 100% { transform: scaleX(1);    opacity: 0.32; }
+    50%      { transform: scaleX(0.94); opacity: 0.26; }
+  }
+  @keyframes shadowHop {
+    0%   { transform: scaleX(1);    opacity: 0.35; }
+    30%  { transform: scaleX(0.55); opacity: 0.14; }
+    100% { transform: scaleX(1);    opacity: 0.35; }
+  }
+
+  /* ================= outer group: idle sway (always on) ================= */
+  #cone-root {
+    transform-origin: 150px 231px;
+    animation: idleSway 3.4s ease-in-out infinite;
+  }
+  #cone-root.jump { animation: hopOnce 0.62s cubic-bezier(.36,0,.15,1) 1; }
+
+  @keyframes idleSway {
+    0%, 100% { transform: translateY(0)   rotate(0deg); }
+    50%      { transform: translateY(-4px) rotate(1.2deg); }
+  }
+  @keyframes hopOnce {
+    0%   { transform: translateY(0)     scale(1, 1)      rotate(0deg); }
+    14%  { transform: translateY(2px)   scale(1.07, 0.9)  rotate(0deg); }
+    45%  { transform: translateY(-58px) scale(0.94, 1.08) rotate(-3deg); }
+    72%  { transform: translateY(0)     scale(1.1, 0.88)  rotate(3deg); }
+    86%  { transform: translateY(-5px)  scale(0.98, 1.03) rotate(-1deg); }
+    100% { transform: translateY(0)     scale(1, 1)       rotate(0deg); }
+  }
+
+  /* ================= inner group: hover response ================= */
+  #cone-hover {
+    transform-origin: 150px 231px;
+    transition: transform 0.35s cubic-bezier(.34,1.56,.64,1);
+    cursor: pointer;
+  }
+  #cone-hit:hover #cone-hover {
+    transform: scale(1.055) rotate(-1.5deg);
+  }
+
+  /* eyes widen + glint pops on hover */
+  #face { transition: transform 0.3s ease; transform-origin: 219px 148px; }
+  #cone-hit:hover #face { transform: scale(1.08); }
+
+  /* ================= blink (independent, continuous) ================= */
+  #blink {
+    animation: blink 4.2s ease-in-out infinite;
+    transform-origin: 219px 148px;
+  }
+  @keyframes blink {
+    0%, 92%, 100% { transform: scaleY(1); }
+    95%           { transform: scaleY(0.05); }
+    97%           { transform: scaleY(1); }
+  }
+
+  #glint { animation: sparkle 2.6s ease-in-out infinite; }
+  @keyframes sparkle {
+    0%, 100% { opacity: 0.55; }
+    22%      { opacity: 1; }
+    36%      { opacity: 0.4; }
+  }
+
+  /* little dust puffs on landing */
+  .puff {
+    opacity: 0;
+    transform-origin: center;
+  }
+  .puff.show {
+    animation: puff 0.55s ease-out 1;
+  }
+  @keyframes puff {
+    0%   { opacity: 0;   transform: scale(0.2) translateY(0); }
+    25%  { opacity: 0.55; }
+    100% { opacity: 0;   transform: scale(1.4) translateY(-6px); }
+  }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+<div id="petWrap">
+<svg id="vscodePetSvg" viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- body: bright azure top-left fading to deep blue bottom-right -->
+    <linearGradient id="tileGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#38C6FF"/>
+      <stop offset="100%" stop-color="#0052A3"/>
+    </linearGradient>
+
+    <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="cheekGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF6B5C" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#FF6B5C" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="puffGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFE3BE" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#FFE3BE" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ground shadow -->
+  <ellipse id="shadow" cx="150" cy="247" rx="66" ry="12" fill="url(#shadowGrad)"/>
+
+  <!-- landing dust puffs -->
+  <circle class="puff" id="puffL" cx="112" cy="235" r="14" fill="url(#puffGrad)"/>
+  <circle class="puff" id="puffR" cx="188" cy="235" r="14" fill="url(#puffGrad)"/>
+
+  <g id="cone-root">
+   <g id="cone-hit">
+    <!-- invisible larger hit-area so hover/click feel generous -->
+    <rect x="30" y="0" width="240" height="400" fill="transparent"/>
+    <g id="cone-hover">
+
+      <!-- legs: stubby rounded feet, anchored under the mark's actual bottom tip (~x184-201)
+           so they tuck behind the body fill instead of floating past its edge -->
+      <rect x="170" y="212" width="20" height="42" rx="9" fill="url(#tileGrad)" stroke="#002B41" stroke-width="2"/>
+      <rect x="194" y="212" width="20" height="42" rx="9" fill="url(#tileGrad)" stroke="#002B41" stroke-width="2"/>
+
+      <!-- the pet's whole body IS the Visual Studio Code mark, scaled up from its native
+           32x32 viewBox (no separate badge/tile - the mark itself is the silhouette) -->
+      <path transform="translate(60,55) scale(5.625)"
+            d="M30.865 3.448l-6.583-3.167c-0.766-0.37-1.677-0.214-2.276 0.385l-12.609 11.505-5.495-4.167c-0.51-0.391-1.229-0.359-1.703 0.073l-1.76 1.604c-0.583 0.526-0.583 1.443-0.005 1.969l4.766 4.349-4.766 4.349c-0.578 0.526-0.578 1.443 0.005 1.969l1.76 1.604c0.479 0.432 1.193 0.464 1.703 0.073l5.495-4.172 12.615 11.51c0.594 0.599 1.505 0.755 2.271 0.385l6.589-3.172c0.693-0.333 1.13-1.031 1.13-1.802v-21.495c0-0.766-0.443-1.469-1.135-1.802zM24.005 23.266l-9.573-7.266 9.573-7.266z"
+            fill="url(#tileGrad)" stroke="#002B41" stroke-width="0.53" stroke-linejoin="round"/>
+
+      <!-- face sits in the solid right-hand column of the mark (x>=195), which is clear
+           of the triangular cutout - no more "hole in the face" -->
+      <g id="face">
+        <ellipse cx="207" cy="155" rx="6" ry="4" fill="url(#cheekGrad)"/>
+        <ellipse cx="231" cy="155" rx="6" ry="4" fill="url(#cheekGrad)"/>
+
+        <g id="blink">
+          <ellipse cx="213" cy="140" rx="6" ry="8" fill="#00202E"/>
+          <ellipse cx="225" cy="140" rx="6" ry="8" fill="#00202E"/>
+          <circle id="glint" cx="211" cy="136" r="2.2" fill="#FFFFFF"/>
+          <circle cx="223" cy="136" r="2" fill="#FFFFFF" opacity="0.9"/>
+        </g>
+
+        <path d="M209 168 Q219 178 229 168" stroke="#00202E" stroke-width="4" fill="none" stroke-linecap="round"/>
+      </g>
+    </g>
+   </g>
+  </g>
+</svg>
+</div>
+</div>
+
+<script>
+  const pet      = document.getElementById('vscodePetSvg');
+  const petWrap  = document.getElementById('petWrap');
+  const coneRoot = document.getElementById('cone-root');
+  const shadow   = document.getElementById('shadow');
+  const puffL    = document.getElementById('puffL');
+  const puffR    = document.getElementById('puffR');
+
+  // Callable from Python (settings window) to live-resize the pet.
+  function applyPetScale(pct) {
+    petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
+  }
+
+  // Seed size from saved config once the bridge is ready.
+  window.addEventListener('pywebviewready', () => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_pet_config) {
+      window.pywebview.api.get_pet_config().then((cfg) => {
+        if (cfg && cfg.size) applyPetScale(cfg.size);
+      });
+    }
+  });
+
+  function triggerJump() {
+    // restart even if mid-jump: strip classes, force reflow, re-add
+    coneRoot.classList.remove('jump');
+    shadow.classList.remove('jump');
+    puffL.classList.remove('show');
+    puffR.classList.remove('show');
+    void coneRoot.offsetWidth; // reflow trick to allow re-trigger
+
+    coneRoot.classList.add('jump');
+    shadow.classList.add('jump');
+
+    // puffs appear right around landing
+    setTimeout(() => {
+      puffL.classList.add('show');
+      puffR.classList.add('show');
+    }, 430);
+  }
+
+  coneRoot.addEventListener('animationend', (e) => {
+    if (e.animationName === 'hopOnce') {
+      coneRoot.classList.remove('jump');
+      shadow.classList.remove('jump');
+    }
+  });
+
+  function handlePetClick() {
+    triggerJump();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_app) {
+      window.pywebview.api.open_app();
+    }
+  }
+
+  // ---- drag & drop (moves the actual native window via Python) --------
+  let dragStartX, dragStartY, isDragging = false, movedDistance = 0;
+  const DRAG_THRESHOLD = 6;
+
+  pet.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) {           // middle/right must not start a drag
+      if (e.button === 1) e.preventDefault();  // block middle-click autoscroll
+      return;
+    }
+    dragStartX = e.screenX;
+    dragStartY = e.screenY;
+    movedDistance = 0;
+    isDragging = false;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+      window.pywebview.api.start_drag();
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (dragStartX === undefined) return;
+    const dx = e.screenX - dragStartX;
+    const dy = e.screenY - dragStartY;
+    movedDistance += Math.abs(dx) + Math.abs(dy);
+    if (movedDistance > DRAG_THRESHOLD) {
+      isDragging = true;
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_move) {
+        window.pywebview.api.drag_move(dx, dy);
+      }
+      dragStartX = e.screenX;
+      dragStartY = e.screenY;
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragStartX === undefined) return;
+    if (isDragging) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
+        window.pywebview.api.drop();
+      }
+    } else {
+      handlePetClick();
+    }
+    dragStartX = undefined;
+    isDragging = false;
+  });
+
+  // Middle-click (scroll-wheel click) the pet -> open the native settings window.
+  pet.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings_window) {
+      window.pywebview.api.open_settings_window();
+    }
+  });
+</script>
+</body>
+</html>
