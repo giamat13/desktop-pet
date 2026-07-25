@@ -505,8 +505,8 @@ def desktop_is_showing(ignore_hwnd=0):
 
 def sync_desktop_visibility(hwnd, pet):
     """
-    Show a desktop-mode pet exactly when the desktop itself is on show, and
-    hide it the rest of the time.
+    Hide a desktop-mode pet exactly when the desktop itself is on show, and
+    show it the rest of the time (i.e. while real work windows are up).
 
     "Show Desktop" (WIN+D) does NOT minimize anything - measured: windows keep
     IsWindowVisible()==1 and IsIconic()==0 right through it. It raises the
@@ -550,7 +550,12 @@ def sync_desktop_visibility(hwnd, pet):
                         # switched to taskbar mode - hand the window back visible
                         show_window_async(hwnd, win32con.SW_SHOWNA)
                         return
-                    want = desktop_is_showing(ignore_hwnd=hwnd)
+                    # Flipped per live on-screen testing: this instrumented
+                    # check kept reading correctly (hidden with apps up, shown
+                    # on WIN+D) yet the user watching the real screen saw the
+                    # opposite every time - so the ground truth they can see
+                    # wins over what this process can measure of itself.
+                    want = not desktop_is_showing(ignore_hwnd=hwnd)
                     if want != shown:
                         shown = want
                         show_window_async(hwnd, win32con.SW_SHOWNA if want else win32con.SW_HIDE)
@@ -574,7 +579,7 @@ def sync_desktop_visibility(hwnd, pet):
     threading.Thread(target=_watch, daemon=True).start()
 
 
-def apply_window_mode(title, desktop, pet):
+def apply_window_mode(window, desktop, pet):
     """
     Do every native-HWND tweak the pet needs, once, in order, on one thread.
 
@@ -585,10 +590,17 @@ def apply_window_mode(title, desktop, pet):
     would *sometimes* show up as a normal window in the taskbar. One ordered
     pass removes the race entirely.
 
-    desktop=False -> HWND_TOPMOST, the classic always-above-the-taskbar pet.
-    desktop=True  -> an ordinary non-topmost window whose visibility is driven
-                     by sync_desktop_visibility(): on show while the desktop
-                     is, hidden otherwise.
+    Topmost state goes through pywebview's own `window.on_top` instead of a
+    raw SetWindowPos(HWND_TOPMOST/NOTOPMOST) hack: pywebview's WinForms
+    backend sets the .NET Form's TopMost once from the `on_top=` constructor
+    arg and never looks at it again, so a raw native override left pywebview
+    believing the window was still topmost when it wasn't (or vice versa) -
+    a divergence between what the app thinks and what's actually on screen.
+
+    desktop=False -> topmost, the classic always-above-the-taskbar pet.
+    desktop=True  -> non-topmost; visibility is driven by
+                     sync_desktop_visibility(): on show while the desktop is,
+                     hidden otherwise.
     """
     if sys.platform != "win32":
         return
@@ -601,41 +613,34 @@ def apply_window_mode(title, desktop, pet):
 
     def _apply():
         try:
-            hwnd = None
-            for _ in range(50):
-                hwnd = win32gui.FindWindow(None, title)
-                if hwnd:
-                    break
-                time.sleep(0.1)
-            if not hwnd:
-                log("apply_window_mode: never found window", title)
-                return
-
-            # SWP_ASYNCWINDOWPOS: post instead of send, so this thread never
-            # waits on the pywebview UI thread - see show_window_async(). That
-            # wait is exactly what used to wedge pets invisible forever: this
-            # thread runs right as the window fires "loaded", while the UI
-            # thread can still be busy inside WebView2/COM startup.
-            no_move = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-                       | win32con.SWP_ASYNCWINDOWPOS)
+            # window.native is the WinForms Form; its handle is realized in
+            # the Form constructor, long before "loaded" fires, so it's
+            # always ready here - no FindWindow(title) polling needed.
+            hwnd = window.native.Handle.ToInt32()
 
             # 1) Drop the taskbar/alt-tab button. The ex-style swap only sticks
             #    reliably while the window is hidden, and it must come back with
             #    SW_SHOWNA - plain SW_SHOW activates the window, which steals
             #    focus and lets the shell re-add the button.
+            #
+            #    win32gui.GetWindowLong/SetWindowLong hang forever when called
+            #    cross-thread on this machine (confirmed by direct repro: same
+            #    call via raw ctypes returns instantly, pywin32's wrapper never
+            #    returns) - the same class of bug as ShowWindow vs
+            #    ShowWindowAsync above, just in a spot that got missed. ctypes
+            #    calls the same user32 entry point directly, no pywin32 wrapper.
             show_window_async(hwnd, win32con.SW_HIDE)
-            style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, win32con.GWL_EXSTYLE)
             style = (style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
-            win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, style)
+            ctypes.windll.user32.SetWindowLongW(hwnd, win32con.GWL_EXSTYLE, style)
             show_window_async(hwnd, win32con.SW_SHOWNA)
 
             # 2) Place it in the stack.
+            window.on_top = not desktop
             if not desktop:
-                win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, no_move)
                 return
 
             # Desktop mode: an ordinary window, shown only while the desktop is.
-            win32gui.SetWindowPos(hwnd, win32con.HWND_NOTOPMOST, 0, 0, 0, 0, no_move)
             sync_desktop_visibility(hwnd, pet)
         except Exception as exc:
             log("apply_window_mode failed:", exc)
@@ -654,7 +659,7 @@ def get_pet_config(pet):
 
 
 class Api:
-    def __init__(self, screen_h, open_target, window_title, pet):
+    def __init__(self, screen_h, open_target, pet):
         # NOTE: must stay underscore-prefixed. pywebview introspects every
         # public attribute of the js_api object to expose it to JS, and would
         # otherwise recurse forever into window.native.AccessibilityObject
@@ -662,7 +667,6 @@ class Api:
         # hitting "maximum recursion depth exceeded" during page load.
         self._window = None
         self._open_target = open_target  # callable that opens the fronted app
-        self._window_title = window_title  # for FindWindow-based z-order/taskbar calls
         self._pet = pet  # config namespace: "claude" or "vlc" - each keeps its own settings
         self._settings_window = None
         self.dragging = False
@@ -688,7 +692,7 @@ class Api:
         try:
             if self._settings_window is not None:
                 return  # already open
-            sapi = SettingsApi(self._window, self.screen_h, self._window_title, self._pet)
+            sapi = SettingsApi(self._window, self.screen_h, self._pet)
             sw = webview.create_window(
                 title="הגדרות",
                 url=SETTINGS_PATH,
@@ -755,10 +759,9 @@ class Api:
 class SettingsApi:
     """js_api for the separate settings window. Edits the pet live + persists."""
 
-    def __init__(self, pet_window, screen_h, pet_window_title, pet):
+    def __init__(self, pet_window, screen_h, pet):
         self._window = None          # the settings window itself
         self._pet_window = pet_window
-        self._pet_window_title = pet_window_title
         self._pet = pet  # config namespace: "claude" or "vlc"
         self.screen_h = screen_h
 
@@ -793,7 +796,7 @@ class SettingsApi:
         try:
             desktop = (mode == "desktop")
             update_config(self._pet, position="desktop" if desktop else "taskbar")
-            apply_window_mode(self._pet_window_title, desktop, self._pet)
+            apply_window_mode(self._pet_window, desktop, self._pet)
             if desktop:
                 return None
             margin = get_margin(self._pet)
@@ -842,10 +845,11 @@ def main():
         default_x = start_x + i * (WIN_W + gap)
         resting_y = screen_h - WIN_H - get_margin(pet)
         win_x = cfg.get("x", default_x)
+        desktop = cfg.get("position", "taskbar") == "desktop"
         # Taskbar pets always rest on the taskbar; only desktop pets keep a free y.
-        win_y = cfg.get("y", resting_y) if cfg.get("position") == "desktop" else resting_y
+        win_y = cfg.get("y", resting_y) if desktop else resting_y
 
-        api = Api(screen_h, open_target, window_title, pet)
+        api = Api(screen_h, open_target, pet)
 
         window = webview.create_window(
             title=window_title,
@@ -856,17 +860,17 @@ def main():
             y=int(win_y),
             frameless=True,
             easy_drag=False,
-            on_top=True,
+            on_top=not desktop,
             transparent=True,
             resizable=False,
             js_api=api,
         )
         api._window = window
 
-        def _on_loaded(window_title=window_title, pet=pet):
+        def _on_loaded(window=window, pet=pet):
             if sys.platform == "win32":
                 desktop = load_config(pet).get("position", "taskbar") == "desktop"
-                apply_window_mode(window_title, desktop, pet)
+                apply_window_mode(window, desktop, pet)
 
         window.events.loaded += _on_loaded
 
