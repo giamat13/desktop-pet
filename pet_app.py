@@ -505,27 +505,36 @@ def desktop_is_showing(ignore_hwnd=0):
 
 def sync_desktop_visibility(hwnd, pet):
     """
-    Hide a desktop-mode pet exactly when the desktop itself is on show, and
-    show it the rest of the time (i.e. while real work windows are up).
+    Keep a desktop-mode pet always shown, but nudge it back above the
+    wallpaper during Show Desktop (WIN+D) so it survives the one moment
+    Progman gets raised to the top of the Z-order. The rest of the time this
+    thread does nothing, so a real app in front keeps covering the pet
+    exactly like it would any other ordinary, un-parented window.
 
     "Show Desktop" (WIN+D) does NOT minimize anything - measured: windows keep
     IsWindowVisible()==1 and IsIconic()==0 right through it. It raises the
     wallpaper window (Progman) to the top of the Z-order, burying whatever sits
-    below. Two earlier attempts got this wrong:
+    below. Earlier attempts got this wrong in both directions:
 
       * HWND_BOTTOM pinned the pet *under* the full-screen wallpaper, so Show
         Desktop covered it.
       * Re-parenting into Progman survived WIN+D but put the pet in the
         wallpaper layer, where it receives no mouse input at all - click, drag
         and middle-click settings all died.
-      * Reacting to GetForegroundWindow()==Progman fired on a manual
-        minimize-all but not on WIN+D, and the HWND_TOP it applied then left
-        the pet floating above every background app until that app was clicked
-        again - the exact inversion of what desktop mode should do.
+      * An unconditional/periodic HWND_TOP reassert - even gated on "pet
+        should currently be visible" - fights the user's own window
+        switching: it isn't scoped to "only when nothing real is in front",
+        so it also fires while a real app *is* in front, and each tick wins
+        the race back over whatever the user just focused, leaving the pet
+        floating above every background app until that app is clicked again.
+      * Actually hiding the pet during Show Desktop (rather than just letting
+        it fall behind whatever's in front) was the opposite of what a
+        "desktop pet" should do - you want to see it precisely when you're
+        looking at the desktop, not have it vanish then.
 
-    So: decide from the Z-order (focus-independent) whether the desktop is
-    actually on show, and drive plain visibility from it. The pet stays an
-    ordinary un-parented window, so it keeps normal mouse input.
+    Gating the nudge strictly on desktop_is_showing() sidesteps the third
+    failure mode: by definition, nothing real is "in front" to fight with
+    while the desktop itself is what's on show.
     """
     import win32gui
     import win32con
@@ -539,7 +548,6 @@ def sync_desktop_visibility(hwnd, pet):
         # thread never waits on the UI thread - see show_window_async().
         flags = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
                  | win32con.SWP_ASYNCWINDOWPOS)
-        shown = None  # last state we applied; only act on a change
         try:
             while True:
                 time.sleep(0.35)
@@ -547,29 +555,8 @@ def sync_desktop_visibility(hwnd, pet):
                     if not win32gui.IsWindow(hwnd):
                         return  # pet closed
                     if load_config(pet).get("position", "taskbar") != "desktop":
-                        # switched to taskbar mode - hand the window back visible
-                        show_window_async(hwnd, win32con.SW_SHOWNA)
-                        return
-                    # Flipped per live on-screen testing: this instrumented
-                    # check kept reading correctly (hidden with apps up, shown
-                    # on WIN+D) yet the user watching the real screen saw the
-                    # opposite every time - so the ground truth they can see
-                    # wins over what this process can measure of itself.
-                    want = not desktop_is_showing(ignore_hwnd=hwnd)
-                    if want != shown:
-                        shown = want
-                        show_window_async(hwnd, win32con.SW_SHOWNA if want else win32con.SW_HIDE)
-                    if want:
-                        # Being non-topmost is the whole point (a real app must
-                        # still cover the pet) - but that same non-topmost
-                        # status means the shell is free to re-raise Progman's
-                        # desktop-icon view above us again later (icon refresh,
-                        # the tail of the Show Desktop animation, etc). A single
-                        # HWND_TOP applied only at the moment of the transition
-                        # measurably lost that race - the pet stayed marked
-                        # visible while explorer's icons silently covered it.
-                        # Reasserting every tick while shown costs one cheap
-                        # SetWindowPos and closes the gap for good.
+                        return  # switched to taskbar mode - nothing left for this thread to do
+                    if desktop_is_showing(ignore_hwnd=hwnd):
                         win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 0, 0, flags)
                 except Exception:
                     pass  # a transient shell state must never kill the watcher
