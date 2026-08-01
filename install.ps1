@@ -40,6 +40,7 @@ Copy-Item -Path "$PSScriptRoot\pets" -Destination $installDir -Recurse -Force
 Copy-Item -Path "$PSScriptRoot\pet_app.py" -Destination $installDir -Force
 Copy-Item -Path "$PSScriptRoot\claude-usage-statusline.ps1" -Destination $installDir -Force
 Copy-Item -Path "$PSScriptRoot\refresh_usage.py" -Destination $installDir -Force
+Copy-Item -Path "$PSScriptRoot\claude-activity-status.ps1" -Destination $installDir -Force
 
 # Keep the usage gauges fed.
 #
@@ -55,13 +56,13 @@ $taskName = "DesktopPetUsageRefresh"
 $action = New-ScheduledTaskAction -Execute $pythonwExe `
     -Argument "`"$installDir\refresh_usage.py`"" -WorkingDirectory $installDir
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes 15)
+    -RepetitionInterval (New-TimeSpan -Minutes 5)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
+    -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 3) `
     -MultipleInstances IgnoreNew -StartWhenAvailable
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Settings $settings -Description "Refreshes DesktopPet usage gauges" -Force | Out-Null
-Write-Host "Registered usage refresh task '$taskName' (every 15 min)."
+Write-Host "Registered usage refresh task '$taskName' (every 5 min)."
 
 $startupFolder = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startupFolder "DesktopPet.lnk"

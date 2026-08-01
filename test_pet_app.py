@@ -99,6 +99,26 @@ def _test_read_usage():
     print("OK: read_usage self-check passed")
 
 
+def _test_read_activity():
+    """read_activity() must hide stale data and surface fresh data untouched."""
+    tmp_dir = tempfile.mkdtemp(prefix="claude_pet_activity_selfcheck_")
+    pet_app.ACTIVITY_PATH = os.path.join(tmp_dir, "activity.json")
+
+    assert pet_app.read_activity() is None, "missing activity.json must read as None"
+
+    fresh = {"state": "tool", "tool": "Bash", "updated_at": time.time()}
+    with open(pet_app.ACTIVITY_PATH, "w", encoding="utf-8-sig") as f:
+        json.dump(fresh, f)
+    assert pet_app.read_activity() == fresh, "fresh activity.json must be returned as-is"
+
+    stale = dict(fresh, updated_at=time.time() - pet_app.ACTIVITY_STALE_SECS - 1)
+    with open(pet_app.ACTIVITY_PATH, "w", encoding="utf-8-sig") as f:
+        json.dump(stale, f)
+    assert pet_app.read_activity() is None, "activity.json older than ACTIVITY_STALE_SECS must read as None"
+
+    print("OK: read_activity self-check passed")
+
+
 def _test_desktop_is_showing_no_hang():
     """
     desktop_is_showing() is called every 0.35s from a background thread per
@@ -125,6 +145,7 @@ def _test_desktop_is_showing_no_hang():
 
 def main():
     _test_read_usage()
+    _test_read_activity()
     _test_desktop_is_showing_no_hang()
 
     assert sys.platform == "win32", "the rest of this self-check only applies on Windows"

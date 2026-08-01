@@ -44,6 +44,29 @@
   }
   #gaugeLive { left: 10px; }
   #gaugeWeek { right: 10px; }
+  /* Activity badge: mirrors what Claude is doing right now (thinking / which
+     tool is running), fed by claude-activity-status.ps1 hooks. Sits between
+     the two gauges, same reasoning as .gauge for staying outside petWrap. */
+  #activityBadge {
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.25s ease-out;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: bold;
+    color: #FFF7F0;
+    background: #00000066;
+    border-radius: 8px;
+    padding: 3px 10px;
+    max-width: 210px; /* the gap between the two 52px-wide gauges, minus margin */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
+  }
   .pet {
     animation: bob 2.2s ease-in-out infinite;
     transform-origin: center bottom;
@@ -169,6 +192,10 @@
   <text id="gaugeWeekValue" x="26" y="39" font-size="16" font-weight="bold" text-anchor="middle" font-family="Courier New, monospace" fill="#FFF7F0">0%</text>
   <text id="gaugeWeekReset" x="26" y="59" font-size="8" text-anchor="middle" font-family="Courier New, monospace" fill="#FFF7F0" opacity="0.75"></text>
 </svg>
+<!-- dir="ltr" is required, not decorative: the page is dir="rtl", and Unicode
+     bidi mirrors '>' to '<' and repositions the whole run in an RTL context -
+     "> Bash" rendered as "Bash <" without this, confirmed with a screenshot. -->
+<div id="activityBadge" dir="ltr"></div>
 </div>
 
 <script>
@@ -299,6 +326,8 @@
     }
     pollUsage();
     setInterval(pollUsage, 15000);
+    pollActivity();
+    setInterval(pollActivity, 1200);
   });
 
   // Live (5h) / weekly (7d) usage gauges, fed by claude-usage-statusline.ps1
@@ -343,6 +372,30 @@
     window.pywebview.api.get_usage().then((u) => {
       setGauge('gaugeLive', u && u.five_hour ? u.five_hour.used_percentage : null, u && u.five_hour ? u.five_hour.resets_at : null);
       setGauge('gaugeWeek', u && u.seven_day ? u.seven_day.used_percentage : null, u && u.seven_day ? u.seven_day.resets_at : null);
+    }).catch(() => {});
+  }
+
+  // Activity badge: "חושב..." while Claude is reasoning, the tool name while
+  // one is running, hidden the rest of the time. Fed by
+  // claude-activity-status.ps1 (a hook, not a poller) via activity.json - see
+  // pet_app.py's ACTIVITY_STALE_SECS for why 1.2s here is safe (hooks fire
+  // multiple times per turn, so real activity never looks stale at this
+  // cadence).
+  // MCP tool names are fully-qualified and can be very long, e.g.
+  // "mcp__claude_ai_Adobe_for_creativity__image_apply_adjustments" - the
+  // final "__"-separated segment is the part a human actually reads.
+  function shortToolName(tool) {
+    const parts = tool.split('__');
+    return parts[parts.length - 1] || tool;
+  }
+
+  function pollActivity() {
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_activity)) return;
+    window.pywebview.api.get_activity().then((a) => {
+      const badge = document.getElementById('activityBadge');
+      if (!a || a.state === 'idle') { badge.style.opacity = '0'; return; }
+      badge.textContent = a.state === 'tool' && a.tool ? ('> ' + shortToolName(a.tool)) : '> חושב_';
+      badge.style.opacity = '1';
     }).catch(() => {});
   }
 

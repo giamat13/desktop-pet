@@ -33,12 +33,19 @@ CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 LOG_PATH = os.path.join(CONFIG_DIR, "log.txt")
 USAGE_PATH = os.path.join(CONFIG_DIR, "usage.json")
-# usage.json is refreshed by refresh_usage.py on a 15-minute scheduled task
+# usage.json is refreshed by refresh_usage.py on a 5-minute scheduled task
 # (and by any interactive `claude` session's status line). Anything older than
 # this means the refresher has stopped, not that usage is genuinely 0 - the
 # gauges hide rather than show a frozen number. Kept comfortably above the
-# 15-minute refresh interval so one missed run doesn't blink the gauges out.
-USAGE_STALE_SECS = 35 * 60
+# 5-minute refresh interval so one missed run doesn't blink the gauges out.
+USAGE_STALE_SECS = 12 * 60
+
+ACTIVITY_PATH = os.path.join(CONFIG_DIR, "activity.json")
+# claude-activity-status.ps1 (a Claude Code hook, not a poller) rewrites this
+# on every UserPromptSubmit/PreToolUse/PostToolUse/Stop event, in ANY Claude
+# Code session on the machine. Short staleness window: this is meant to feel
+# live, and hooks fire multiple times per turn under normal use.
+ACTIVITY_STALE_SECS = 20
 
 
 def log(*args):
@@ -817,6 +824,24 @@ def read_usage():
     return data
 
 
+def read_activity():
+    """
+    Claude's current activity ("thinking" / "tool" + tool name / "idle"), as
+    last written by the claude-activity-status.ps1 hook. Returns None (no
+    data / stale) or {"state", "tool", "updated_at"} - stale here just means
+    no session has fired a hook recently, so the pet hides the badge instead
+    of showing a frozen state.
+    """
+    try:
+        with open(ACTIVITY_PATH, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    if time.time() - data.get("updated_at", 0) > ACTIVITY_STALE_SECS:
+        return None
+    return data
+
+
 def get_pet_config(pet):
     """Everything the pet / settings pages need to render themselves."""
     cfg = load_config(pet)
@@ -859,6 +884,10 @@ class Api:
     def get_usage(self):
         """Polled from JS on a timer to drive the live/weekly usage gauges."""
         return read_usage()
+
+    def get_activity(self):
+        """Polled from JS on a short timer to drive the activity badge."""
+        return read_activity()
 
     def open_settings_window(self):
         """Middle-click the pet -> open settings in its own native window."""
