@@ -54,9 +54,26 @@ lock = threading.Lock()
 buf = [""]
 
 
+def safe_print(s):
+    """
+    print() that can't itself crash the script.
+
+    Under the scheduled task this runs headless via pythonw.exe (no console -
+    stdout is None, and print() would raise AttributeError, same trap as
+    pet_app.py's log()). Run manually from a real console instead, Windows'
+    legacy console codepage (cp1252) can't encode characters the TUI emits,
+    such as the warning glyph U+26A0 - which is exactly what silently
+    swallowed the real diagnostic output the first time this was debugged.
+    """
+    try:
+        print(s, flush=True)
+    except Exception:
+        pass
+
+
 def note(msg):
     if VERBOSE:
-        print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+        safe_print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]")
@@ -161,13 +178,23 @@ except Exception:
 if ok:
     with open(USAGE, encoding="utf-8-sig") as f:
         d = json.load(f)
-    print("5h=%s%%  7d=%s%%" % (
+    safe_print("5h=%s%%  7d=%s%%" % (
         d["five_hour"]["used_percentage"], d["seven_day"]["used_percentage"]))
     sys.exit(0)
 
 note("no real numbers")
 if VERBOSE:
-    with lock:
-        print("--- flattened screen tail ---", flush=True)
-        print(flat(buf[0])[-1200:], flush=True)
+    # A file, not stdout: under pythonw.exe there is no console at all, and
+    # even in a real console the TUI's raw bytes can defeat print() in ways
+    # that are themselves hard to see - which is exactly what happened
+    # debugging this: a UnicodeEncodeError on a warning glyph, then safe_print
+    # silently swallowing whatever came after it.
+    dump_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "refresh_debug.txt")
+    with lock, open(dump_path, "w", encoding="utf-8") as f:
+        f.write(f"buf length: {len(buf[0])}\n")
+        f.write("--- flattened screen tail ---\n")
+        f.write(flat(buf[0])[-1200:] + "\n")
+        f.write("--- raw tail (escaped) ---\n")
+        f.write(repr(buf[0][-800:]) + "\n")
+    note(f"debug dump written to {dump_path}")
 sys.exit(1)
