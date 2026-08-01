@@ -1,4 +1,4 @@
-# ClaudePet usage bridge.
+# DesktopPet usage bridge.
 #
 # This is registered as Claude Code's `statusLine` command (see install.ps1).
 # Claude Code invokes it on every status update and pipes session JSON to
@@ -6,7 +6,7 @@
 # Anthropic's own 5-hour and weekly usage percentages, the same numbers
 # `/usage` shows. This script:
 #
-#   1. Writes those numbers to ClaudePet's config folder as usage.json, so
+#   1. Writes those numbers to DesktopPet's config folder as usage.json, so
 #      the desktop pet (pet_app.py) can read them and render the live/weekly
 #      gauges - no scraping, no guessed limits, just what Claude Code itself
 #      reports.
@@ -37,7 +37,7 @@ $sevenDResets = $data.rate_limits.seven_day.resets_at
 
 # --- write usage.json for the desktop pet ---
 # Same folder pet_app.py already uses for config.json/log.txt (CONFIG_DIR).
-$configDir = "$env:LOCALAPPDATA\ClaudePet"
+$configDir = "$env:LOCALAPPDATA\DesktopPet"
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
 $usagePath = Join-Path $configDir "usage.json"
 $tmpPath = "$usagePath.tmp"

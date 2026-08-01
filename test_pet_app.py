@@ -129,7 +129,7 @@ def main():
 
     assert sys.platform == "win32", "the rest of this self-check only applies on Windows"
 
-    # Isolate config writes from the user's real %LOCALAPPDATA%\ClaudePet\config.json.
+    # Isolate config writes from the user's real %LOCALAPPDATA%\DesktopPet\config.json.
     tmp_dir = tempfile.mkdtemp(prefix="claude_pet_selfcheck_")
     pet_app.CONFIG_PATH = os.path.join(tmp_dir, "config.json")
 

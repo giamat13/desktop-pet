@@ -1,5 +1,5 @@
 """
-Refresh ClaudePet's usage.json with REAL rate-limit numbers.
+Refresh DesktopPet's usage.json with REAL rate-limit numbers.
 
 Claude Code only renders its statusLine (and therefore only runs
 claude-usage-statusline.ps1) inside an interactive terminal session - it never
@@ -23,7 +23,7 @@ import time
 
 from winpty import PtyProcess
 
-USAGE = os.path.expandvars(r"%LOCALAPPDATA%\ClaudePet\usage.json")
+USAGE = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet\usage.json")
 WORKDIR = os.path.expanduser("~")
 
 

@@ -1,6 +1,6 @@
 # Desktop Pet installer
 # Finds one consistent Python interpreter, installs pywebview into it,
-# copies the app to %LOCALAPPDATA%\ClaudePet, registers it to run at
+# copies the app to %LOCALAPPDATA%\DesktopPet, registers it to run at
 # every login, and starts it immediately.
 
 $ErrorActionPreference = "Stop"
@@ -26,13 +26,13 @@ if (-not (Test-Path $pythonwExe)) { $pythonwExe = $pythonExe }
 Write-Host "Installing dependencies (pywebview + pywin32)..."
 & $pythonExe -m pip install --quiet --upgrade -r "$PSScriptRoot\requirements.txt"
 
-$installDir = "$env:LOCALAPPDATA\ClaudePet"
+$installDir = "$env:LOCALAPPDATA\DesktopPet"
 
 # Re-running this script updates an existing install. A pet already running
 # holds the OLD code, so stop it first or the copied files won't take effect
 # until the next login.
 Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" |
-    Where-Object { $_.CommandLine -like "*ClaudePet*pet_app.py*" } |
+    Where-Object { $_.CommandLine -like "*DesktopPet*pet_app.py*" } |
     ForEach-Object { Write-Host "Stopping running Desktop Pet (pid $($_.ProcessId))..."; Stop-Process -Id $_.ProcessId -Force }
 
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
@@ -50,8 +50,8 @@ Copy-Item -Path "$PSScriptRoot\refresh_usage.py" -Destination $installDir -Force
 # refresh_usage.py drives one short session in a hidden ConPTY to collect the
 # numbers. Each run costs one tiny API turn, so keep the interval modest.
 #
-# To stop it:    Unregister-ScheduledTask -TaskName ClaudePetUsageRefresh -Confirm:$false
-$taskName = "ClaudePetUsageRefresh"
+# To stop it:    Unregister-ScheduledTask -TaskName DesktopPetUsageRefresh -Confirm:$false
+$taskName = "DesktopPetUsageRefresh"
 $action = New-ScheduledTaskAction -Execute $pythonwExe `
     -Argument "`"$installDir\refresh_usage.py`"" -WorkingDirectory $installDir
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
@@ -60,11 +60,11 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
     -MultipleInstances IgnoreNew -StartWhenAvailable
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-    -Settings $settings -Description "Refreshes ClaudePet usage gauges" -Force | Out-Null
+    -Settings $settings -Description "Refreshes DesktopPet usage gauges" -Force | Out-Null
 Write-Host "Registered usage refresh task '$taskName' (every 15 min)."
 
 $startupFolder = [Environment]::GetFolderPath("Startup")
-$shortcutPath = Join-Path $startupFolder "ClaudePet.lnk"
+$shortcutPath = Join-Path $startupFolder "DesktopPet.lnk"
 
 $wsh = New-Object -ComObject WScript.Shell
 $shortcut = $wsh.CreateShortcut($shortcutPath)

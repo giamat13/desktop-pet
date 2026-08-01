@@ -29,7 +29,7 @@ PETS = {
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
 DEFAULT_TASKBAR_MARGIN = 46  # used only as an initial guess for calibration
 
-CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\ClaudePet")
+CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 LOG_PATH = os.path.join(CONFIG_DIR, "log.txt")
 USAGE_PATH = os.path.join(CONFIG_DIR, "usage.json")
