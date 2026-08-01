@@ -6,10 +6,12 @@ to verify the taskbar-hiding ex-style hack and the on_top hand-off to
 pywebview's Window object actually do what apply_window_mode claims -
 without ever creating a real, visible pet window on screen.
 """
+import json
 import os
 import sys
 import time
 import tempfile
+import threading
 
 import win32api
 import win32con
@@ -64,8 +66,68 @@ def _wait_for(cond, timeout=3.0):
     raise AssertionError("condition not met within timeout")
 
 
-def main():
+def _test_read_usage():
+    """read_usage() must hide stale data and surface fresh data untouched."""
+    tmp_dir = tempfile.mkdtemp(prefix="claude_pet_usage_selfcheck_")
+    pet_app.USAGE_PATH = os.path.join(tmp_dir, "usage.json")
+
+    assert pet_app.read_usage() is None, "missing usage.json must read as None"
+
+    fresh = {
+        "five_hour": {"used_percentage": 42, "resets_at": "2026-08-01T12:00:00Z"},
+        "seven_day": {"used_percentage": 17, "resets_at": "2026-08-05T00:00:00Z"},
+        "updated_at": time.time(),
+    }
+    with open(pet_app.USAGE_PATH, "w", encoding="utf-8") as f:
+        json.dump(fresh, f)
+    assert pet_app.read_usage() == fresh, "fresh usage.json must be returned as-is"
+
+    stale = dict(fresh, updated_at=time.time() - pet_app.USAGE_STALE_SECS - 1)
+    with open(pet_app.USAGE_PATH, "w", encoding="utf-8") as f:
+        json.dump(stale, f)
+    assert pet_app.read_usage() is None, "usage.json older than USAGE_STALE_SECS must read as None"
+
+    # The real writer is PowerShell's Set-Content -Encoding utf8, which emits a
+    # BOM. Reading that as plain utf-8 throws, which silently hid every real
+    # reading; only Python-written (BOM-less) fixtures passed before.
+    with open(pet_app.USAGE_PATH, "w", encoding="utf-8-sig") as f:
+        json.dump(fresh, f)
+    with open(pet_app.USAGE_PATH, "rb") as f:
+        assert f.read(3) == b"\xef\xbb\xbf", "fixture must actually carry a BOM"
+    assert pet_app.read_usage() is not None, "usage.json with a UTF-8 BOM must still parse"
+
+    print("OK: read_usage self-check passed")
+
+
+def _test_desktop_is_showing_no_hang():
+    """
+    desktop_is_showing() is called every 0.35s from a background thread per
+    desktop-mode pet (sync_desktop_visibility). It walks every top-level
+    window on the real desktop - read-only, no window of ours is touched -
+    so this call is safe to make directly against live system state.
+    Regression check for the cross-thread win32gui.GetWindowLong hang that
+    froze pythonw.exe hard enough for Windows to kill it (AppHangB1) once
+    the fix in _is_app_window was missed.
+    """
     assert sys.platform == "win32", "this self-check only applies on Windows"
+    result = {}
+
+    def _call():
+        result["value"] = pet_app.desktop_is_showing()
+
+    t = threading.Thread(target=_call, daemon=True)
+    t.start()
+    t.join(timeout=2.0)
+    assert not t.is_alive(), "desktop_is_showing() did not return within 2s - hang regression"
+    assert "value" in result and isinstance(result["value"], bool)
+    print("OK: desktop_is_showing no-hang self-check passed")
+
+
+def main():
+    _test_read_usage()
+    _test_desktop_is_showing_no_hang()
+
+    assert sys.platform == "win32", "the rest of this self-check only applies on Windows"
 
     # Isolate config writes from the user's real %LOCALAPPDATA%\ClaudePet\config.json.
     tmp_dir = tempfile.mkdtemp(prefix="claude_pet_selfcheck_")

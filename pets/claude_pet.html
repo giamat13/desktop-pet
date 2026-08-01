@@ -72,7 +72,11 @@
 <body>
 <div id="stage">
 <div id="petWrap">
-<svg id="petSvg" class="pet" width="230" height="172" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+<!-- viewBox starts at -22, not 0, purely to open headroom above the ears for the
+     usage gauges. The sprite keeps its old scale (198/172 ~= the old 172/150)
+     and the stage is bottom-aligned, so the pet still rests in exactly the
+     same spot - only the empty space above it grew. -->
+<svg id="petSvg" class="pet" width="230" height="198" viewBox="0 -22 200 172" xmlns="http://www.w3.org/2000/svg">
 
   <!-- shadow -->
   <ellipse cx="100" cy="132" rx="46" ry="8" fill="#000000" opacity="0.15"/>
@@ -128,6 +132,20 @@
 
   <!-- heart burst -->
   <text id="heart1" class="heart" x="150" y="28" font-size="18">&#9829;</text>
+
+  <!-- usage gauges: live (5h) and weekly (7d), from claude-usage-statusline.ps1 -->
+  <g id="gaugeLive" class="gauge" transform="translate(24,-6)" opacity="0">
+    <circle r="11" fill="none" stroke="#00000022" stroke-width="3"/>
+    <circle id="gaugeLiveArc" r="11" fill="none" stroke="#7CD992" stroke-width="3"
+            stroke-linecap="round" transform="rotate(-90)" stroke-dasharray="0 69.1"/>
+    <text y="3" font-size="8" text-anchor="middle" font-family="Courier New, monospace" fill="#FFF7F0">5h</text>
+  </g>
+  <g id="gaugeWeek" class="gauge" transform="translate(176,-6)" opacity="0">
+    <circle r="11" fill="none" stroke="#00000022" stroke-width="3"/>
+    <circle id="gaugeWeekArc" r="11" fill="none" stroke="#7CD992" stroke-width="3"
+            stroke-linecap="round" transform="rotate(-90)" stroke-dasharray="0 69.1"/>
+    <text y="3" font-size="8" text-anchor="middle" font-family="Courier New, monospace" fill="#FFF7F0">7d</text>
+  </g>
 </svg>
 </div>
 </div>
@@ -258,7 +276,38 @@
         if (cfg && cfg.size) applyPetScale(cfg.size);
       });
     }
+    pollUsage();
+    setInterval(pollUsage, 15000);
   });
+
+  // Live (5h) / weekly (7d) usage gauges, fed by claude-usage-statusline.ps1
+  // via usage.json. Hidden (opacity 0) whenever there's no fresh data - no
+  // active Claude Code session, or the statusline bridge isn't installed.
+  const GAUGE_CIRC = 2 * Math.PI * 11; // matches the gauge circles' r=11
+
+  function gaugeColor(pct) {
+    if (pct >= 90) return '#E05C3A';
+    if (pct >= 70) return '#F0B94A';
+    return '#7CD992';
+  }
+
+  function setGauge(id, pct) {
+    const g = document.getElementById(id);
+    if (pct == null) { g.style.opacity = '0'; return; }
+    const clamped = Math.max(0, Math.min(100, pct));
+    const arc = document.getElementById(id + 'Arc');
+    arc.setAttribute('stroke-dasharray', `${(clamped / 100 * GAUGE_CIRC).toFixed(2)} ${GAUGE_CIRC}`);
+    arc.setAttribute('stroke', gaugeColor(clamped));
+    g.style.opacity = '1';
+  }
+
+  function pollUsage() {
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_usage)) return;
+    window.pywebview.api.get_usage().then((u) => {
+      setGauge('gaugeLive', u && u.five_hour ? u.five_hour.used_percentage : null);
+      setGauge('gaugeWeek', u && u.seven_day ? u.seven_day.used_percentage : null);
+    }).catch(() => {});
+  }
 
   // Middle-click the pet -> open settings in its own native window (Python).
   pet.addEventListener('auxclick', (e) => {

@@ -32,6 +32,13 @@ DEFAULT_TASKBAR_MARGIN = 46  # used only as an initial guess for calibration
 CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\ClaudePet")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 LOG_PATH = os.path.join(CONFIG_DIR, "log.txt")
+USAGE_PATH = os.path.join(CONFIG_DIR, "usage.json")
+# usage.json is refreshed by refresh_usage.py on a 15-minute scheduled task
+# (and by any interactive `claude` session's status line). Anything older than
+# this means the refresher has stopped, not that usage is genuinely 0 - the
+# gauges hide rather than show a frozen number. Kept comfortably above the
+# 15-minute refresh interval so one missed run doesn't blink the gauges out.
+USAGE_STALE_SECS = 35 * 60
 
 
 def log(*args):
@@ -477,9 +484,70 @@ def show_window_async(hwnd, cmd):
     of sending removes the wait entirely.
     """
     try:
-        ctypes.windll.user32.ShowWindowAsync(hwnd, cmd)
+        USER32.ShowWindowAsync(hwnd, cmd)
     except Exception as exc:
         log("show_window_async failed:", exc)
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+# Shell-owned windows that are desktop-sized but are not "an app in front":
+# the wallpaper host, the taskbar, and the various always-present shell
+# surfaces. Matched by class name, which is free to read - see _is_app_window.
+_NON_APP_CLASSES = {
+    "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd",
+    "SHELLDLL_DefView", "SysListView32", "Button",
+    "ForegroundStaging", "MultitaskingViewFrame", "XamlExplorerHostIslandWindow",
+}
+
+
+def _make_user32():
+    """
+    A private user32 handle with explicit signatures for everything this
+    module calls.
+
+    Two things this buys over plain `ctypes.windll.user32`:
+
+    * ctypes assumes a C `int` return by default, which silently truncates
+      the 64-bit HWNDs FindWindowW/GetWindow/GetForegroundWindow return on
+      64-bit Python - the Z-order walk would then pass around corrupted
+      handles.
+    * `ctypes.windll.user32` is a process-wide cached object shared with
+      every other library in this process (pywebview, pythonnet). Declaring
+      argtypes on it would impose our signatures on their calls too. A
+      separate WinDLL instance keeps that blast radius at zero.
+    """
+    if sys.platform != "win32":
+        return None
+    u = ctypes.WinDLL("user32")
+    HWND = ctypes.c_void_p
+    sigs = {
+        "FindWindowW": (HWND, [ctypes.c_wchar_p, ctypes.c_wchar_p]),
+        "GetWindow": (HWND, [HWND, ctypes.c_uint]),
+        "GetForegroundWindow": (HWND, []),
+        "IsWindow": (ctypes.c_bool, [HWND]),
+        "IsWindowVisible": (ctypes.c_bool, [HWND]),
+        "IsIconic": (ctypes.c_bool, [HWND]),
+        "GetWindowLongW": (ctypes.c_long, [HWND, ctypes.c_int]),
+        "SetWindowLongW": (ctypes.c_long, [HWND, ctypes.c_int, ctypes.c_long]),
+        "GetWindowTextLengthW": (ctypes.c_int, [HWND]),
+        "GetClassNameW": (ctypes.c_int, [HWND, ctypes.c_wchar_p, ctypes.c_int]),
+        "GetWindowRect": (ctypes.c_bool, [HWND, ctypes.POINTER(_RECT)]),
+        "ShowWindowAsync": (ctypes.c_bool, [HWND, ctypes.c_int]),
+        "SetWindowPos": (ctypes.c_bool, [HWND, HWND, ctypes.c_int, ctypes.c_int,
+                                         ctypes.c_int, ctypes.c_int, ctypes.c_uint]),
+    }
+    for name, (restype, argtypes) in sigs.items():
+        fn = getattr(u, name)
+        fn.restype = restype
+        fn.argtypes = argtypes
+    return u
+
+
+USER32 = _make_user32()
 
 
 def desktop_is_showing(ignore_hwnd=0):
@@ -502,32 +570,54 @@ def desktop_is_showing(ignore_hwnd=0):
     move focus in cases where injected input from another process is refused.
     Live testing showed real WIN+D behaving differently from either signal
     alone, so both are checked and either is enough.
+
+    Every win32 call below goes through ctypes, not win32gui/pywin32. This
+    whole function runs on a background thread (sync_desktop_visibility's
+    watcher, once per desktop-mode pet, every 0.35s), and on this machine
+    several pywin32-wrapped user32 calls hang forever when made cross-thread
+    while the same call via raw ctypes returns instantly - see
+    apply_window_mode's GWL_EXSTYLE read/write for the first instance of this.
+    A version of this function that used win32gui only for GetWindowLong
+    still froze pythonw.exe hard enough for Windows to force-kill it
+    (AppHangB1) twice in one session, so every call in this hot path was
+    moved to ctypes rather than guessing which one was the culprit.
     """
     if sys.platform != "win32":
         return False
-    try:
-        import win32gui
-        import win32con
-    except ImportError:
-        return False
+    user32 = USER32
 
-    progman = win32gui.FindWindow("Progman", None)
+    GW_HWNDFIRST = 0
+    GW_HWNDNEXT = 2
+    GWL_EXSTYLE = -20
+    WS_EX_TOOLWINDOW = 0x00000080
+
+    progman = user32.FindWindowW("Progman", None)
     if not progman:
         return False
 
     def _is_app_window(h):
-        if h == ignore_hwnd or not win32gui.IsWindowVisible(h) or win32gui.IsIconic(h):
+        if h == ignore_hwnd or not user32.IsWindowVisible(h) or user32.IsIconic(h):
             return False
         # tool windows don't count, which conveniently also skips the other pets
-        if win32gui.GetWindowLong(h, win32con.GWL_EXSTYLE) & win32con.WS_EX_TOOLWINDOW:
+        if user32.GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW:
             return False
-        if not win32gui.GetWindowText(h):
+        # Deliberately NOT a window-text check. GetWindowText/GetWindowTextLength
+        # SEND WM_GETTEXT(LENGTH) to the owning process, so walking the Z-order
+        # blocks on any app that is busy or hung - and this walk runs every
+        # 0.35s per desktop-mode pet. That is what froze pythonw.exe hard
+        # enough for Windows to force-kill it (AppHangB1), intermittently,
+        # depending on which apps happened to be open. Class name is read from
+        # kernel-side window state and sends nothing, so it can never block.
+        buf = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(h, buf, 64)
+        if buf.value in _NON_APP_CLASSES:
             return False
-        left, top, right, bottom = win32gui.GetWindowRect(h)
-        return (right - left) > 200 and (bottom - top) > 200
+        rect = _RECT()
+        user32.GetWindowRect(h, ctypes.byref(rect))
+        return (rect.right - rect.left) > 200 and (rect.bottom - rect.top) > 200
 
     try:
-        h = win32gui.GetWindow(progman, win32con.GW_HWNDFIRST)
+        h = user32.GetWindow(progman, GW_HWNDFIRST)
         for _ in range(400):  # bounded: never spin on a malformed Z-order
             if not h:
                 break
@@ -535,14 +625,17 @@ def desktop_is_showing(ignore_hwnd=0):
                 return True
             if _is_app_window(h):
                 break  # a real app is in front by z-order; fall through to the focus check
-            h = win32gui.GetWindow(h, win32con.GW_HWNDNEXT)
+            h = user32.GetWindow(h, GW_HWNDNEXT)
     except Exception as exc:
         log("desktop_is_showing z-order check failed:", exc)
 
     try:
-        fg = win32gui.GetForegroundWindow()
-        if fg and fg != ignore_hwnd and win32gui.GetClassName(fg) in ("Progman", "WorkerW"):
-            return True
+        fg = user32.GetForegroundWindow()
+        if fg and fg != ignore_hwnd:
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(fg, buf, 256)
+            if buf.value in ("Progman", "WorkerW"):
+                return True
     except Exception as exc:
         log("desktop_is_showing focus check failed:", exc)
     return False
@@ -581,28 +674,32 @@ def sync_desktop_visibility(hwnd, pet):
     failure mode: by definition, nothing real is "in front" to fight with
     while the desktop itself is what's on show.
     """
-    import win32gui
-    import win32con
-
     if hwnd in _watched_pets:  # toggling modes must not stack watchers
         return
     _watched_pets.add(hwnd)
 
     def _watch():
-        # SWP_ASYNCWINDOWPOS: post the request instead of sending it, so this
-        # thread never waits on the UI thread - see show_window_async().
-        flags = (win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE
-                 | win32con.SWP_ASYNCWINDOWPOS)
+        # Every call here is ctypes, not win32gui/pywin32 - same cross-thread
+        # hang risk as desktop_is_showing(), which this thread also calls.
+        user32 = USER32
+        HWND_TOP = 0
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        SWP_NOACTIVATE = 0x0010
+        # post the request instead of sending it, so this thread never waits
+        # on the UI thread - see show_window_async().
+        SWP_ASYNCWINDOWPOS = 0x4000
+        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS
         try:
             while True:
                 time.sleep(0.35)
                 try:
-                    if not win32gui.IsWindow(hwnd):
+                    if not user32.IsWindow(hwnd):
                         return  # pet closed
                     if load_config(pet).get("position", "taskbar") != "desktop":
                         return  # switched to taskbar mode - nothing left for this thread to do
                     if desktop_is_showing(ignore_hwnd=hwnd):
-                        win32gui.SetWindowPos(hwnd, win32con.HWND_TOP, 0, 0, 0, 0, flags)
+                        user32.SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, flags)
                 except Exception:
                     pass  # a transient shell state must never kill the watcher
         finally:
@@ -662,13 +759,31 @@ def apply_window_mode(window, desktop, pet):
             #    ShowWindowAsync above, just in a spot that got missed. ctypes
             #    calls the same user32 entry point directly, no pywin32 wrapper.
             show_window_async(hwnd, win32con.SW_HIDE)
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, win32con.GWL_EXSTYLE)
+            style = USER32.GetWindowLongW(hwnd, win32con.GWL_EXSTYLE)
             style = (style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
-            ctypes.windll.user32.SetWindowLongW(hwnd, win32con.GWL_EXSTYLE, style)
+            USER32.SetWindowLongW(hwnd, win32con.GWL_EXSTYLE, style)
             show_window_async(hwnd, win32con.SW_SHOWNA)
 
             # 2) Place it in the stack.
-            window.on_top = not desktop
+            #
+            #    Only when it actually has to change. pywebview's on_top
+            #    getter reads a cached Python value, but its setter does
+            #    `Form.TopMost = x`, which marshals onto that window's UI
+            #    thread and blocks until that thread pumps messages. At
+            #    startup the UI thread is still bringing up WebView2 while the
+            #    main thread is busy creating the remaining pets, so this
+            #    assignment deadlocked the process: py-spy caught _apply
+            #    parked in set_on_top, MainThread parked in create_window, and
+            #    two pywebview generate_js_object threads parked on evaluate_js
+            #    locks. Windows then killed the whole app as unresponsive
+            #    (AppHangB1), taking every pet down at once.
+            #
+            #    create_window(on_top=...) already set this correctly, so at
+            #    startup the guard makes it a no-op and no marshaling happens.
+            #    A later switch from the settings window still applies, and by
+            #    then the UI thread is idle and servicing messages normally.
+            if window.on_top != (not desktop):
+                window.on_top = not desktop
             if not desktop:
                 return
 
@@ -678,6 +793,28 @@ def apply_window_mode(window, desktop, pet):
             log("apply_window_mode failed:", exc)
 
     threading.Thread(target=_apply, daemon=True).start()
+
+
+def read_usage():
+    """
+    Live (5h) and weekly (7d) Claude usage percentages, as last written by
+    claude-usage-statusline.ps1. Returns None (no data / stale) or
+    {"five_hour": {"used_percentage", "resets_at"}, "seven_day": {...}} -
+    the pet hides its gauges on None instead of showing frozen numbers.
+    """
+    # utf-8-sig, not utf-8: claude-usage-statusline.ps1 writes this file with
+    # Set-Content -Encoding utf8, which emits a BOM. Plain utf-8 leaves the BOM
+    # in the text and json.load then fails on it, so every real status-line
+    # write was silently discarded and the gauges stayed hidden - while tests
+    # that wrote the file from Python (no BOM) passed. utf-8-sig reads both.
+    try:
+        with open(USAGE_PATH, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception:
+        return None
+    if time.time() - data.get("updated_at", 0) > USAGE_STALE_SECS:
+        return None
+    return data
 
 
 def get_pet_config(pet):
@@ -718,6 +855,10 @@ class Api:
         the GUI thread. The page calls this once pywebview.api is ready.
         """
         return get_pet_config(self._pet)
+
+    def get_usage(self):
+        """Polled from JS on a timer to drive the live/weekly usage gauges."""
+        return read_usage()
 
     def open_settings_window(self):
         """Middle-click the pet -> open settings in its own native window."""
