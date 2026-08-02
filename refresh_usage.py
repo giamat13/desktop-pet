@@ -91,11 +91,32 @@ def flat(s):
     return re.sub(r"\s+", "", _ANSI.sub("", s)).lower()
 
 
-def has_real_numbers():
+def read_updated_at():
     try:
         with open(USAGE, encoding="utf-8-sig") as f:
             d = json.load(f)
-        return d.get("five_hour", {}).get("used_percentage") is not None
+        return d.get("updated_at")
+    except Exception:
+        return None
+
+
+def has_real_numbers(baseline_updated_at):
+    """
+    True only once usage.json reflects THIS session's write, not a stale one.
+
+    A percentage-only check passes forever once any past run ever succeeded -
+    the file already has a non-null used_percentage from yesterday, so the
+    loop would declare victory on the first poll, before the prompt is even
+    sent, and never actually wait for a fresh write. Requiring updated_at to
+    advance past the pre-spawn baseline is what makes this an actual refresh.
+    """
+    try:
+        with open(USAGE, encoding="utf-8-sig") as f:
+            d = json.load(f)
+        ua = d.get("updated_at")
+        return (d.get("five_hour", {}).get("used_percentage") is not None
+                and ua is not None
+                and (baseline_updated_at is None or ua != baseline_updated_at))
     except Exception:
         return False
 
@@ -110,6 +131,7 @@ if not CLAUDE:
     note("claude CLI not found on PATH or in the usual install locations")
     sys.exit(2)
 
+baseline_updated_at = read_updated_at()
 p = PtyProcess.spawn([CLAUDE], dimensions=(45, 130), cwd=WORKDIR, env=env)
 note("spawned")
 
@@ -162,7 +184,7 @@ while time.time() - start < TIMEOUT:
             asked = True
             note("sent prompt")
 
-    if has_real_numbers():
+    if has_real_numbers(baseline_updated_at):
         note("real numbers present")
         ok = True
         break
