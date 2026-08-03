@@ -4,11 +4,16 @@
 # PostToolUse / Stop - see install.ps1 for exact wiring) so the desktop pet
 # can mirror what Claude is doing right now, the same way the terminal shows
 # "puzzling..." or a tool name. Fires on every matching event in EVERY Claude
-# Code session on this machine, not just one project - with two sessions
-# open at once the pet just shows whichever fired most recently.
+# Code session on this machine, not just one project.
+#
+# One file PER SESSION (activity-<session_id>.json), not one shared file: with
+# two sessions open, a single file meant the busier one overwrote the other
+# every few hundred ms and the pet showed a flickering mix of both. Per-session
+# files let the pet animate the most recent session and still list the rest.
 #
 # Claude Code pipes one JSON object per invocation to stdin, always including
-# hook_event_name, and tool_name for the PreToolUse/PostToolUse events.
+# hook_event_name, plus tool_name for the PreToolUse/PostToolUse events and
+# session_id / cwd for all of them.
 
 $ErrorActionPreference = "SilentlyContinue"
 
@@ -32,12 +37,26 @@ if (-not $state) { exit 0 }
 
 $configDir = "$env:LOCALAPPDATA\DesktopPet"
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-$path = Join-Path $configDir "activity.json"
+
+# Older Claude Code builds may not send session_id; one shared bucket then
+# behaves exactly like the previous single-file version rather than breaking.
+$sid = $data.session_id
+if (-not $sid) { $sid = "default" }
+$sid = $sid -replace '[^a-zA-Z0-9_-]', ''
+if (-not $sid) { $sid = "default" }
+
+$path = Join-Path $configDir "activity-$sid.json"
 $tmp = "$path.tmp"
+
+# The pet labels each session by its project folder, not by the raw id - a
+# 36-char uuid tells you nothing about which window is busy.
+$label = $null
+if ($data.cwd) { $label = Split-Path -Leaf $data.cwd }
 
 $obj = [ordered]@{
     state      = $state
     tool       = $data.tool_name
+    label      = $label
     updated_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 }
 

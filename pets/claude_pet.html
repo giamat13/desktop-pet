@@ -91,8 +91,61 @@
     white-space: nowrap;
     pointer-events: none;
   }
+  /* ---- other live sessions -------------------------------------------
+     Several Claude Code windows can be working at once, but there is only
+     ever ONE pet - a second sprite per session was the obvious idea and the
+     wrong one (they overlap, they fight for the taskbar strip, and you stop
+     being able to tell which is which). So the newest working session owns
+     the body, and every other live session gets a small chip down here:
+     project name, what it's running, and a dot that keeps its own beat. The
+     bottom corner is the only real estate the sprite and the two gauges
+     don't already claim. */
+  #sessions {
+    position: absolute;
+    left: 4px;
+    bottom: 3px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    pointer-events: none;
+    z-index: 4;
+  }
+  .sessionChip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 98px;
+    padding: 1px 5px 1px 4px;
+    border-radius: 7px;
+    background: #12100FE6;
+    color: #F5E7DA;
+    font-family: 'Courier New', monospace;
+    font-size: 9px;
+    font-weight: bold;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    /* Each chip is one session's own heartbeat, so they must NOT breathe in
+       unison - a per-chip delay is set inline from JS. */
+    animation: chipPulse 1.6s ease-in-out infinite;
+  }
+  .sessionChip .dot {
+    flex: none;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    /* amber = running a tool, cool grey-blue = reasoning */
+    background: #F0B94A;
+  }
+  .sessionChip.thinking .dot { background: #8FB8D8; }
+  @keyframes chipPulse {
+    0%, 100% { opacity: 0.55; transform: translateX(0); }
+    50%      { opacity: 1;    transform: translateX(2px); }
+  }
   .pet {
-    animation: bob 2.2s ease-in-out infinite;
+animation: bob 2.2s ease-in-out infinite;
     transform-origin: center bottom;
     cursor: pointer;
   }
@@ -109,8 +162,13 @@
      click-jump must come last to win. */
   .pet.act-think  { animation: actThink 1.5s ease-in-out infinite; }
   .pet.act-shell  { animation: actShell 0.34s steps(2, end) infinite; }
+  .pet.act-pwsh   { animation: actPwsh 0.46s steps(3, end) infinite; }
   .pet.act-write  { animation: actWrite 0.5s ease-in-out infinite; }
+  .pet.act-edit   { animation: actEdit 0.38s ease-in-out infinite; }
   .pet.act-search { animation: actSearch 1.6s ease-in-out infinite; }
+  .pet.act-read   { animation: actRead 1.8s ease-in-out infinite; }
+  .pet.act-todo   { animation: actTodo 1.2s steps(1, end) infinite; }
+  .pet.act-mcp    { animation: actMcp 1.3s ease-in-out infinite; }
   .pet.act-web    { animation: actWeb 1.1s ease-in-out infinite; }
   /* .pet.act-ask is defined further down, with the rest of the ask treatment. */
   .pet.act-agent  { animation: actAgent 1.4s ease-in-out infinite; }
@@ -127,16 +185,55 @@
     50%  { transform: translate(2px, -2px); }
     100% { transform: translate(-2px, 0); }
   }
+  /* same judder as Bash but heavier and on a 3-step ratchet, so the two
+     shells are told apart by rhythm rather than by reading the badge */
+  @keyframes actPwsh {
+    0%   { transform: translate(0, 0) scale(1); }
+    33%  { transform: translate(3px, -3px) scale(1.02); }
+    66%  { transform: translate(-3px, -1px) scale(0.99); }
+    100% { transform: translate(0, 0) scale(1); }
+  }
   /* quick scribbling nod */
   @keyframes actWrite {
     0%, 100% { transform: translateY(0) rotate(0deg); }
     30%      { transform: translateY(-4px) rotate(-2.5deg); }
     70%      { transform: translateY(-1px) rotate(2.5deg); }
   }
+  /* Write lays text down; Edit picks at it - short sharp pecks in place,
+     no travel, so surgical editing doesn't look like drafting */
+  @keyframes actEdit {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    25%      { transform: translate(-3px, -2px) rotate(-4deg); }
+    60%      { transform: translate(2px, 0) rotate(3deg); }
+  }
   /* sweeping left-right, like scanning a shelf */
   @keyframes actSearch {
     0%, 100% { transform: translateX(-14px) rotate(-2deg); }
     50%      { transform: translateX(14px) rotate(2deg); }
+  }
+  /* Grep sweeps sideways across everything; Read walks DOWN one file -
+     a slow slide down the page, then a snap back to the top for the next */
+  @keyframes actRead {
+    0%   { transform: translateY(-7px) rotate(-1deg); }
+    80%  { transform: translateY(7px) rotate(1deg); }
+    90%  { transform: translateY(7px) rotate(1deg); }
+    100% { transform: translateY(-7px) rotate(-1deg); }
+  }
+  /* ticking down a checklist: three discrete drops, no easing between them,
+     because a todo list advances item by item and never glides */
+  @keyframes actTodo {
+    0%   { transform: translateY(-6px); }
+    25%  { transform: translateY(-2px); }
+    50%  { transform: translateY(2px); }
+    75%  { transform: translateY(6px); }
+    100% { transform: translateY(-6px); }
+  }
+  /* reaching out to something that isn't local: a slow yaw, leaning away
+     and back as if talking to a server across the room */
+  @keyframes actMcp {
+    0%, 100% { transform: rotate(0deg) scaleX(1) translateX(0); }
+    30%      { transform: rotate(-7deg) scaleX(0.94) translateX(-6px); }
+    70%      { transform: rotate(7deg) scaleX(1.06) translateX(6px); }
   }
   /* buoyant drifting, out on the network */
   @keyframes actWeb {
@@ -380,6 +477,9 @@
      bidi mirrors '>' to '<' and repositions the whole run in an RTL context -
      "> Bash" rendered as "Bash <" without this, confirmed with a screenshot. -->
 <div id="activityBadge" dir="ltr"></div>
+<!-- One chip per OTHER live Claude Code session (see #sessions in the CSS).
+     dir="ltr" for the same reason as the badge: tool names are ASCII. -->
+<div id="sessions" dir="ltr"></div>
 <!-- Pops in only while Claude is waiting on an answer from you. Lives in the
      HTML layer, not the pet's SVG: the sprite's viewBox has no room left
      above the antenna, and out here it can also sit above the sprite in the
@@ -592,17 +692,27 @@
   // wins, and ACT_DEFAULT catches everything unrecognised so a new tool still
   // makes the pet visibly busy instead of looking idle mid-run.
   const ACT_DEFAULT = 'act-busy';
+  // The heaviest-used tools get their own rule ahead of the family rule they
+  // would otherwise fall into (Edit before Write, Read before Grep,
+  // PowerShell before Bash): those pairs run often enough that sharing one
+  // animation made the pet look stuck on the same gesture for minutes.
   const ACT_RULES = [
-    [/^(Bash|PowerShell|Shell|KillShell|BashOutput)$/i, 'act-shell'],
+    [/^TodoWrite$/i, 'act-todo'],
+    [/^PowerShell$/i, 'act-pwsh'],
+    [/^(Bash|Shell|KillShell|BashOutput)$/i, 'act-shell'],
     [/^(AskUserQuestion|ExitPlanMode|EnterPlanMode)$/i, 'act-ask'],
-    [/^(Read|Glob|Grep|LS|NotebookRead|Explore|search|smart_search|ctx_search)$/i, 'act-search'],
-    [/^(Edit|Write|NotebookEdit|MultiEdit|Artifact)$/i, 'act-write'],
+    [/^(Read|NotebookRead)$/i, 'act-read'],
+    [/^(Glob|Grep|LS|Explore|search|smart_search|ctx_search)$/i, 'act-search'],
+    [/^Edit$/i, 'act-edit'],
+    [/^(Write|NotebookEdit|MultiEdit|Artifact)$/i, 'act-write'],
     [/^(WebFetch|WebSearch|fetch|navigate)$/i, 'act-web'],
     [/^(Agent|Task|SendMessage|Skill)$/i, 'act-agent'],
     [/browser|fetch|search/i, 'act-web'],
   ];
-  const ALL_ACT_CLASSES = ['act-think', 'act-shell', 'act-write', 'act-search',
-                           'act-web', 'act-ask', 'act-agent', ACT_DEFAULT];
+  const ALL_ACT_CLASSES = ['act-think', 'act-shell', 'act-pwsh', 'act-write',
+                           'act-edit', 'act-search', 'act-read', 'act-todo',
+                           'act-mcp', 'act-web', 'act-ask', 'act-agent',
+                           ACT_DEFAULT];
 
   // The face changes with the body. Motion alone reads from across the room
   // but is ambiguous up close - "tilting" and "leaning" are the same gesture
@@ -611,8 +721,13 @@
   const ACT_EYES = {
     'act-think':  ['o', 'o'],   // wide, pondering
     'act-shell':  ['$', '$'],   // a shell prompt in each eye
+    'act-pwsh':   ['>', '>'],   // the other shell's prompt
     'act-write':  ['=', '='],   // narrowed, concentrating
+    'act-edit':   ['/', '\\'],  // nib strokes, picking at a line
     'act-search': ['@', '@'],   // scanning lenses
+    'act-read':   ['[', ']'],   // a page held open
+    'act-todo':   ['v', 'v'],   // ticking boxes
+    'act-mcp':    ['+', '+'],   // plugged into something external
     'act-web':    ['~', '~'],   // off surfing
     'act-ask':    ['?', '?'],   // waiting on you
     'act-agent':  ['*', '*'],   // handed off, spinning up
@@ -632,6 +747,11 @@
     if (a.state !== 'tool' || !a.tool) return 'act-think';
     const name = shortToolName(a.tool);
     for (const [re, cls] of ACT_RULES) if (re.test(name)) return cls;
+    // An MCP tool whose short name matched a rule above keeps that rule on
+    // purpose (browser_navigate really is web work). Only the leftovers land
+    // here - and "some server is doing something" is still more informative
+    // than the generic busy bob.
+    if (/^mcp__/i.test(a.tool)) return 'act-mcp';
     return ACT_DEFAULT;
   }
 
@@ -647,11 +767,50 @@
     badge.textContent = text;
   }
 
+  // Chips for the OTHER live sessions. Rebuilt from scratch only when the
+  // text actually changes: re-creating the nodes every 1.2s poll would restart
+  // chipPulse mid-beat and the whole stack would twitch in lockstep.
+  const sessionsEl = document.getElementById('sessions');
+  const MAX_CHIPS = 3;
+  let lastChipKey = '';
+
+  function renderSessions(others) {
+    const list = others || [];
+    const shown = list.slice(0, MAX_CHIPS).map((s) => ({
+      label: s.label || 'session',
+      tool: s.state === 'tool' && s.tool ? shortToolName(s.tool) : '…',
+      thinking: s.state !== 'tool',
+    }));
+    const extra = list.length - shown.length;
+    const key = JSON.stringify([shown, extra]);
+    if (key === lastChipKey) return;
+    lastChipKey = key;
+    sessionsEl.textContent = '';
+    shown.forEach((s, i) => {
+      const chip = document.createElement('div');
+      chip.className = 'sessionChip' + (s.thinking ? ' thinking' : '');
+      // Staggered so three busy sessions read as three separate heartbeats.
+      chip.style.animationDelay = (i * 0.35) + 's';
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      chip.appendChild(dot);
+      chip.appendChild(document.createTextNode(s.label + ' ' + s.tool));
+      sessionsEl.appendChild(chip);
+    });
+    if (extra > 0) {
+      const more = document.createElement('div');
+      more.className = 'sessionChip';
+      more.textContent = '+' + extra;
+      sessionsEl.appendChild(more);
+    }
+  }
+
   function pollActivity() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_activity)) return;
     window.pywebview.api.get_activity().then((a) => {
       const badge = document.getElementById('activityBadge');
       const cls = activityClass(a);
+      renderSessions(a && a.others);
       if (!cls) {
         badge.style.opacity = '0';
         badge.classList.remove('ask');
@@ -660,12 +819,17 @@
         setEyes(null);
         return;
       }
+      // With other sessions on screen the badge alone is ambiguous - it has
+      // to say WHICH project the body is currently animating. Alone, the
+      // label is just noise, so it only appears when there is a second
+      // session to be confused with.
+      const prefix = (a.others && a.others.length && a.label) ? a.label + ' ' : '';
       if (cls === 'act-ask') {
         setBadge(badge, 'שאלה בשבילך');
       } else if (a.state === 'tool' && a.tool) {
-        setBadge(badge, '> ' + shortToolName(a.tool));
+        setBadge(badge, prefix + '> ' + shortToolName(a.tool));
       } else {
-        setBadge(badge, 'חושב…');
+        setBadge(badge, prefix ? prefix + '> …' : 'חושב…');
       }
       badge.classList.toggle('ask', cls === 'act-ask');
       badge.style.opacity = '1';

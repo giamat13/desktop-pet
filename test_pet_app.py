@@ -121,21 +121,47 @@ def _test_read_usage():
 
 
 def _test_read_activity():
-    """read_activity() must hide stale data and surface fresh data untouched."""
+    """
+    read_activity() must hide stale data, surface fresh data, and - with
+    several Claude Code sessions writing their own file - pick ONE of them to
+    drive the pet while listing the rest.
+    """
     tmp_dir = tempfile.mkdtemp(prefix="claude_pet_activity_selfcheck_")
-    pet_app.ACTIVITY_PATH = os.path.join(tmp_dir, "activity.json")
+    pet_app.ACTIVITY_GLOB = os.path.join(tmp_dir, "activity-*.json")
 
-    assert pet_app.read_activity() is None, "missing activity.json must read as None"
+    def write(sid, obj):
+        path = os.path.join(tmp_dir, "activity-%s.json" % sid)
+        with open(path, "w", encoding="utf-8-sig") as f:
+            json.dump(obj, f)
+        return path
 
-    fresh = {"state": "tool", "tool": "Bash", "updated_at": time.time()}
-    with open(pet_app.ACTIVITY_PATH, "w", encoding="utf-8-sig") as f:
-        json.dump(fresh, f)
-    assert pet_app.read_activity() == fresh, "fresh activity.json must be returned as-is"
+    assert pet_app.read_activity() is None, "no session files must read as None"
 
-    stale = dict(fresh, updated_at=time.time() - pet_app.ACTIVITY_STALE_SECS - 1)
-    with open(pet_app.ACTIVITY_PATH, "w", encoding="utf-8-sig") as f:
-        json.dump(stale, f)
-    assert pet_app.read_activity() is None, "activity.json older than ACTIVITY_STALE_SECS must read as None"
+    fresh = {"state": "tool", "tool": "Bash", "label": "a", "updated_at": time.time()}
+    write("a", fresh)
+    got = pet_app.read_activity()
+    assert got["tool"] == "Bash" and got["others"] == [], "a lone fresh session must drive the pet"
+
+    write("a", dict(fresh, updated_at=time.time() - pet_app.ACTIVITY_STALE_SECS - 1))
+    assert pet_app.read_activity() is None, "a session older than ACTIVITY_STALE_SECS must read as None"
+
+    # Two working sessions: newest drives, older rides along in "others".
+    write("a", dict(fresh, tool="Bash", label="a", updated_at=time.time() - 5))
+    write("b", dict(fresh, tool="Edit", label="b", updated_at=time.time()))
+    got = pet_app.read_activity()
+    assert got["tool"] == "Edit", "the most recent working session must drive the pet"
+    assert [o["label"] for o in got["others"]] == ["a"], "other live sessions must be listed"
+
+    # A session that just went idle must not steal the pet from a busy one,
+    # even though its Stop hook fired most recently.
+    write("b", dict(fresh, state="idle", tool=None, label="b", updated_at=time.time() + 1))
+    got = pet_app.read_activity()
+    assert got["label"] == "a" and got["others"] == [], "an idle session must not outrank a working one"
+
+    # Long-dead files get swept rather than accumulating one per session.
+    dead = write("c", dict(fresh, updated_at=time.time() - pet_app.ACTIVITY_KEEP_SECS - 1))
+    pet_app.read_activity()
+    assert not os.path.exists(dead), "files older than ACTIVITY_KEEP_SECS must be deleted"
 
     print("OK: read_activity self-check passed")
 

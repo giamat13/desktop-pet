@@ -41,12 +41,16 @@ USAGE_PATH = os.path.join(CONFIG_DIR, "usage.json")
 # 5-minute refresh interval so one missed run doesn't blink the gauges out.
 USAGE_STALE_SECS = 12 * 60
 
-ACTIVITY_PATH = os.path.join(CONFIG_DIR, "activity.json")
-# claude-activity-status.ps1 (a Claude Code hook, not a poller) rewrites this
-# on every UserPromptSubmit/PreToolUse/PostToolUse/Stop event, in ANY Claude
-# Code session on the machine. Short staleness window: this is meant to feel
-# live, and hooks fire multiple times per turn under normal use.
+ACTIVITY_GLOB = os.path.join(CONFIG_DIR, "activity-*.json")
+# claude-activity-status.ps1 (a Claude Code hook, not a poller) rewrites one
+# of these per Claude Code session, on every
+# UserPromptSubmit/PreToolUse/PostToolUse/Stop event, for ANY session on the
+# machine. Short staleness window: this is meant to feel live, and hooks fire
+# multiple times per turn under normal use.
 ACTIVITY_STALE_SECS = 20
+# A session that ends leaves its file behind forever. Nothing reads a file
+# this old, so the read path sweeps them - no scheduled task for 200 bytes.
+ACTIVITY_KEEP_SECS = 6 * 60 * 60
 
 
 def log(*args):
@@ -869,18 +873,47 @@ def read_activity():
     """
     Claude's current activity ("thinking" / "tool" + tool name / "idle"), as
     last written by the claude-activity-status.ps1 hook. Returns None (no
-    data / stale) or {"state", "tool", "updated_at"} - stale here just means
-    no session has fired a hook recently, so the pet hides the badge instead
-    of showing a frozen state.
+    data / stale) or {"state", "tool", "label", "updated_at", "others"} -
+    stale here just means no session has fired a hook recently, so the pet
+    hides the badge instead of showing a frozen state.
+
+    One hook file per session, so with several Claude Code windows open the
+    pet still has ONE body: the newest working session drives the animation
+    and the rest ride along in "others" as small chips. Sorting by updated_at
+    and preferring a working session over an idle one is what stops a
+    finished session from stealing the pet away from a running one.
     """
-    try:
-        with open(ACTIVITY_PATH, "r", encoding="utf-8-sig") as f:
-            data = json.load(f)
-    except Exception:
+    now = time.time()
+    sessions = []
+    for path in glob.glob(ACTIVITY_GLOB):
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        age = now - data.get("updated_at", 0)
+        if age > ACTIVITY_KEEP_SECS:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            continue
+        if age > ACTIVITY_STALE_SECS:
+            continue
+        sessions.append(data)
+
+    if not sessions:
         return None
-    if time.time() - data.get("updated_at", 0) > ACTIVITY_STALE_SECS:
-        return None
-    return data
+    sessions.sort(key=lambda d: d.get("updated_at", 0), reverse=True)
+    working = [d for d in sessions if d.get("state") not in (None, "idle")]
+    if not working:
+        return sessions[0]  # everything idle - the pet stands down
+    primary = dict(working[0])
+    primary["others"] = [
+        {"state": d.get("state"), "tool": d.get("tool"), "label": d.get("label")}
+        for d in working[1:]
+    ]
+    return primary
 
 
 # ---------------------------------------------------------------- media ---
