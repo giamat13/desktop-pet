@@ -114,6 +114,16 @@
     0%, 100% { transform: translateY(0) rotate(-4deg); }
     50%      { transform: translateY(-9px) rotate(4deg); }
   }
+  /* An ad break reports "playing" just like a real track, but dancing to an
+     ad reads as celebrating it - a slow, sinking slouch instead makes clear
+     the pet knows this isn't music. */
+  .pet.bored {
+    animation: bored 2.6s ease-in-out infinite;
+  }
+  @keyframes bored {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50%      { transform: translateY(3px) rotate(-2deg); }
+  }
   .pet.jump {
     animation: jump 0.55s ease-out;
   }
@@ -226,6 +236,20 @@
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
   }
 
+  // Shared by the click handler and the automatic song-change trigger below,
+  // so a new track gets the same little burst as a manual click without
+  // duplicating the animation logic.
+  function popNote() {
+    note.style.transition = 'none';
+    note.style.opacity = '1';
+    note.style.transform = 'translateY(0)';
+    requestAnimationFrame(() => {
+      note.style.transition = 'opacity 1.1s ease-out, transform 1.1s ease-out';
+      note.style.opacity = '0';
+      note.style.transform = 'translateY(-40px)';
+    });
+  }
+
   function handlePetClick() {
     if (animating) return;
     animating = true;
@@ -235,14 +259,7 @@
       window.pywebview.api.open_app();
     }
 
-    note.style.transition = 'none';
-    note.style.opacity = '1';
-    note.style.transform = 'translateY(0)';
-    requestAnimationFrame(() => {
-      note.style.transition = 'opacity 1.1s ease-out, transform 1.1s ease-out';
-      note.style.opacity = '0';
-      note.style.transform = 'translateY(-40px)';
-    });
+    popNote();
 
     setTimeout(() => {
       pet.classList.remove('jump');
@@ -325,6 +342,17 @@
     return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
   }
 
+  // read_smtc_media() falls back to the bare string "Spotify" when there's no
+  // artist/title to report (exactly what a free-tier ad break looks like),
+  // and ad sessions sometimes name themselves outright.
+  function looksLikeAd(title) {
+    if (!title) return false;
+    const t = title.trim().toLowerCase();
+    return t === 'spotify' || t.includes('advertisement');
+  }
+
+  let lastTitle = null;
+
   function pollMedia() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_media)) return;
     window.pywebview.api.get_media().then((m) => {
@@ -334,6 +362,8 @@
       if (!m || !m.duration) {
         bar.classList.remove('shown');
         pet.classList.remove('dancing');
+        pet.classList.remove('bored');
+        lastTitle = null;
         return;
       }
       document.getElementById('mediaTitle').textContent = m.title || '';
@@ -343,9 +373,20 @@
         `${fmtTime(m.position)} / ${fmtTime(m.duration)}`;
       bar.classList.toggle('paused', !m.playing);
       bar.classList.add('shown');
+
+      const ad = looksLikeAd(m.title);
+      const shouldDance = m.playing && !ad;
       // Don't re-add: that would restart the dance loop on every 1s poll.
-      if (m.playing !== pet.classList.contains('dancing') && !animating) {
-        pet.classList.toggle('dancing', m.playing);
+      if (shouldDance !== pet.classList.contains('dancing') && !animating) {
+        pet.classList.toggle('dancing', shouldDance);
+      }
+      pet.classList.toggle('bored', ad);
+
+      // A new track (but not the very first sighting, and not into an ad)
+      // gets the same little note burst as a manual click.
+      if (m.title && m.title !== lastTitle) {
+        if (lastTitle !== null && !ad) popNote();
+        lastTitle = m.title;
       }
     }).catch(() => {});
   }

@@ -124,12 +124,48 @@
     transform-origin: 150px 372px;
     animation: idleSway 3.4s ease-in-out infinite;
   }
-  #cone-root.jump { animation: hopOnce 0.62s cubic-bezier(.36,0,.15,1) 1; }
-
   @keyframes idleSway {
     0%, 100% { transform: translateY(0)   rotate(0deg); }
     50%      { transform: translateY(-4px) rotate(1.2deg); }
   }
+  /* While VLC is actually playing, the cone itself grooves to it instead of
+     just idling underneath a progress bar - the bar alone left the character
+     looking untouched by what it was supposedly reporting on. Paused/no-media
+     falls back to idleSway, same as before. */
+  #cone-root.playing {
+    animation: vlcGroove 0.58s ease-in-out infinite;
+  }
+  @keyframes vlcGroove {
+    0%, 100% { transform: translateY(0)    rotate(-4deg); }
+    50%      { transform: translateY(-10px) rotate(4deg); }
+  }
+  /* Last ~15s of a playing track: a quicker, more anxious wobble instead of
+     the steady groove, so "about to end" reads on the cone itself rather
+     than only from watching the bar's fill creep to the right edge.
+     Declared after .playing so it wins the specificity tie while active. */
+  #cone-root.near-end {
+    animation: vlcNearEnd 0.35s ease-in-out infinite;
+  }
+  @keyframes vlcNearEnd {
+    0%, 100% { transform: translateY(0)   rotate(-6deg); }
+    50%      { transform: translateY(-4px) rotate(6deg); }
+  }
+  /* One-shot startle for a sudden seek/skip in the timeline (position jumped
+     far more than one second's worth of playback since the last poll) -
+     the bar's fill would otherwise just silently teleport with no reaction
+     from the character at all. */
+  #cone-root.startle { animation: vlcStartle 0.45s ease-out 1; }
+  @keyframes vlcStartle {
+    0%   { transform: translateY(0)    scale(1, 1)    rotate(0deg); }
+    30%  { transform: translateY(-14px) scale(0.9, 1.1) rotate(-8deg); }
+    60%  { transform: translateY(0)    scale(1.05, 0.92) rotate(6deg); }
+    100% { transform: translateY(0)    scale(1, 1)    rotate(0deg); }
+  }
+  /* Declared AFTER .playing/.near-end on purpose: same specificity, so a
+     click-jump (transient) still wins over an in-progress groove/anticipation
+     (continuous) whenever both classes are briefly present together. */
+  #cone-root.jump { animation: hopOnce 0.62s cubic-bezier(.36,0,.15,1) 1; }
+
   @keyframes hopOnce {
     0%   { transform: translateY(0)     scale(1, 1)      rotate(0deg); }
     14%  { transform: translateY(2px)   scale(1.07, 0.9)  rotate(0deg); }
@@ -320,13 +356,27 @@
     return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
   }
 
+  // How close to the end counts as "about to finish".
+  const NEAR_END_SECS = 15;
+  // The poll is on a ~1s timer, so one second of real playback is expected
+  // between reads; anything past this slack is an actual seek, not just
+  // ordinary timer jitter.
+  const SEEK_JUMP_SECS = 4;
+  let lastPosition = null;
+
   function pollMedia() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_media)) return;
     window.pywebview.api.get_media().then((m) => {
       const bar = document.getElementById('mediaBar');
       // Nothing loaded, VLC closed, or the HTTP interface is off: no bar at
       // all rather than an empty one pretending to be at 0:00.
-      if (!m || !m.duration) { bar.classList.remove('shown'); return; }
+      if (!m || !m.duration) {
+        bar.classList.remove('shown');
+        coneRoot.classList.remove('playing');
+        coneRoot.classList.remove('near-end');
+        lastPosition = null;
+        return;
+      }
       document.getElementById('mediaTitle').textContent = m.title || '';
       const frac = Math.max(0, Math.min(1, m.position / m.duration));
       document.getElementById('mediaFill').style.transform = `scaleX(${frac})`;
@@ -334,6 +384,25 @@
         `${fmtTime(m.position)} / ${fmtTime(m.duration)}`;
       bar.classList.toggle('paused', !m.playing);
       bar.classList.add('shown');
+      // Don't re-add unconditionally: that would restart the groove loop
+      // from its 0% frame on every 1s poll instead of letting it run.
+      if (m.playing !== coneRoot.classList.contains('playing')) {
+        coneRoot.classList.toggle('playing', m.playing);
+      }
+
+      const nearEnd = m.playing && (m.duration - m.position) <= NEAR_END_SECS && (m.duration - m.position) > 0;
+      if (nearEnd !== coneRoot.classList.contains('near-end')) {
+        coneRoot.classList.toggle('near-end', nearEnd);
+      }
+
+      // A seek/skip: the position moved far more than the ~1s that should
+      // have elapsed since the last poll (in either direction).
+      if (lastPosition != null && m.playing && Math.abs(m.position - (lastPosition + 1)) > SEEK_JUMP_SECS) {
+        coneRoot.classList.remove('startle');
+        void coneRoot.offsetWidth; // reflow trick to allow re-trigger
+        coneRoot.classList.add('startle');
+      }
+      lastPosition = m.position;
     }).catch(() => {});
   }
 
@@ -359,6 +428,8 @@
     if (e.animationName === 'hopOnce') {
       coneRoot.classList.remove('jump');
       shadow.classList.remove('jump');
+    } else if (e.animationName === 'vlcStartle') {
+      coneRoot.classList.remove('startle');
     }
   });
 

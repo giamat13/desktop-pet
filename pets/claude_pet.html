@@ -345,6 +345,43 @@ animation: bob 2.2s ease-in-out infinite;
   #visor { transition: fill 0.4s ease-out; }
   .pet[class*="act-"] #visor { fill: #33251C; }
 
+  /* ---- near usage limit --------------------------------------------
+     Independent of whichever act-* animation is currently playing: this
+     only recolors the body and reveals a dripping sweat drop, so "close to
+     the 5h cap" reads on the character itself instead of only in the corner
+     gauge - without fighting for the .pet element's own `animation`
+     property (which act-* already owns). */
+  #petBody { transition: fill 0.6s ease; }
+  .pet.near-limit #petBody { fill: #C24632; }
+  #sweat {
+    opacity: 0;
+    transform-origin: 171px 42px;
+  }
+  .pet.near-limit #sweat {
+    animation: sweatDrip 1.4s ease-in infinite;
+  }
+  @keyframes sweatDrip {
+    0%   { opacity: 0.9; transform: translateY(0); }
+    80%  { opacity: 0.35; transform: translateY(14px); }
+    100% { opacity: 0; transform: translateY(16px); }
+  }
+
+  /* ---- stuck tool ----------------------------------------------------
+     A tool that's been running much longer than usual gets an impatient,
+     faster foot-tap and a slightly darker visor - layered on the FEET, not
+     on .pet itself, so it doesn't fight or replace whatever act-* body
+     animation is already playing (Bash judder, Edit pecks, etc). */
+  .pet.stuck .foot {
+    animation: stompImpatient 0.28s ease-in-out infinite;
+  }
+  @keyframes stompImpatient {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+  }
+  /* Declared after the existing act-* visor rule so it wins the specificity
+     tie whenever a tool is both "running" and "stuck". */
+  .pet.stuck #visor { fill: #3A1710; }
+
   .pet.jump {
     animation: jump 0.55s ease-out;
   }
@@ -400,7 +437,7 @@ animation: bob 2.2s ease-in-out infinite;
   <rect x="166" y="38" width="22" height="28" rx="9" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
 
   <!-- body -->
-  <rect x="30" y="16" width="140" height="88" rx="26" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
+  <rect id="petBody" x="30" y="16" width="140" height="88" rx="26" fill="#D2703C" stroke="#FFF7F0" stroke-width="5"/>
 
   <!-- visor / face screen -->
   <rect id="visor" x="50" y="32" width="100" height="42" rx="13" fill="#20201E"/>
@@ -428,6 +465,9 @@ animation: bob 2.2s ease-in-out infinite;
   <!-- cheeks -->
   <rect x="42" y="79" width="11" height="6" rx="2" fill="#F5C4B3" opacity="0.85"/>
   <rect x="147" y="79" width="11" height="6" rx="2" fill="#F5C4B3" opacity="0.85"/>
+
+  <!-- sweat drop: shown only while the 5h usage gauge is near its limit -->
+  <text id="sweat" x="171" y="42" font-size="18">&#128167;</text>
 
   <!-- speech bubble -->
   <g id="bubbleGroup" class="bubble" transform="translate(96,-52)">
@@ -664,11 +704,18 @@ animation: bob 2.2s ease-in-out infinite;
     g.style.opacity = '1';
   }
 
+  // The body only turns stressed once usage crosses this - a live gauge in
+  // the corner already reports every intermediate percentage, so the
+  // character reacting all the way from 1% would just be noise.
+  const NEAR_LIMIT_PCT = 85;
+
   function pollUsage() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_usage)) return;
     window.pywebview.api.get_usage().then((u) => {
-      setGauge('gaugeLive', u && u.five_hour ? u.five_hour.used_percentage : null, u && u.five_hour ? u.five_hour.resets_at : null);
+      const fiveHourPct = u && u.five_hour ? u.five_hour.used_percentage : null;
+      setGauge('gaugeLive', fiveHourPct, u && u.five_hour ? u.five_hour.resets_at : null);
       setGauge('gaugeWeek', u && u.seven_day ? u.seven_day.used_percentage : null, u && u.seven_day ? u.seven_day.resets_at : null);
+      pet.classList.toggle('near-limit', fiveHourPct != null && fiveHourPct >= NEAR_LIMIT_PCT);
     }).catch(() => {});
   }
 
@@ -805,9 +852,32 @@ animation: bob 2.2s ease-in-out infinite;
     }
   }
 
+  // "Stuck" tracking is entirely client-side: activity.json has no
+  // started_at field (that would mean touching the PowerShell hook), but the
+  // same tool+session showing up across consecutive 1.2s polls is just as
+  // good a signal that it's still the same run, not a new one.
+  const STUCK_MS = 30000;
+  let lastToolKey = null;
+  let toolStartedAt = 0;
+
+  function updateStuck(a) {
+    if (!a || a.state !== 'tool' || !a.tool) {
+      lastToolKey = null;
+      pet.classList.remove('stuck');
+      return;
+    }
+    const key = a.tool + '|' + (a.label || '');
+    if (key !== lastToolKey) {
+      lastToolKey = key;
+      toolStartedAt = Date.now();
+    }
+    pet.classList.toggle('stuck', Date.now() - toolStartedAt > STUCK_MS);
+  }
+
   function pollActivity() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_activity)) return;
     window.pywebview.api.get_activity().then((a) => {
+      updateStuck(a);
       const badge = document.getElementById('activityBadge');
       const cls = activityClass(a);
       renderSessions(a && a.others);
