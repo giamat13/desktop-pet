@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>Spotify Pet</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+  #stage {
+    position: relative; /* anchors #mediaBar, which sits outside petWrap */
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background: transparent;
+  }
+  #petWrap {
+    transition: transform 0.2s ease-out;
+    transform-origin: center bottom;
+    transform: scale(var(--pet-scale, 1));
+  }
+  #petWrap.pet-hover {
+    transform: scale(calc(var(--pet-scale, 1) * 1.08)) rotate(-3deg);
+  }
+
+  /* Now-playing bar. Sibling of #petWrap, not part of the SVG: the pet rides
+     a size slider and a hop animation, and the bar must not. Near-opaque dark
+     backing with light text on purpose - the pet floats over whatever is
+     behind it, so anything relying on the backdrop's own contrast is
+     unreadable half the time. */
+  #mediaBar {
+    position: absolute;
+    top: 4px;
+    left: 12px;
+    right: 12px;
+    opacity: 0;
+    transition: opacity 0.3s ease-out;
+    pointer-events: none;
+    background: #12100FE6;
+    border-radius: 10px;
+    padding: 6px 10px 7px;
+    font-family: 'Courier New', monospace;
+    color: #FFFFFF;
+  }
+  /* Class-driven, never an inline opacity: `paused` has to be able to win
+     over `shown`, and an inline style would beat both. */
+  #mediaBar.shown { opacity: 1; }
+  #mediaBar.shown.paused { opacity: 0.62; }
+  /* Title and elapsed share one row on purpose. Stacked on three rows the bar
+     was ~55px tall and ran under the sprite, which paints over it (the pet is
+     later in the DOM) - the right third of the track was simply invisible. */
+  #mediaTop {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  #mediaTitle {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: bold;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #mediaTrack {
+    height: 6px;
+    border-radius: 3px;
+    background: #FFFFFF33;
+    overflow: hidden;
+  }
+  #mediaFill {
+    height: 100%;
+    width: 100%;
+    background: #1DB954;
+    /* scaleX, not width: this is an always-on overlay that ticks once a
+       second forever, and transform stays off the layout path entirely.
+       #mediaTrack's overflow:hidden supplies the rounded ends. */
+    transform: scaleX(0);
+    transform-origin: left center;
+    /* matches the 1s poll, so the bar creeps instead of stepping */
+    transition: transform 1s linear;
+  }
+  #mediaTime {
+    flex: none;
+    font-size: 11px;
+    font-weight: bold;
+    opacity: 0.9;
+  }
+
+  .pet {
+    animation: bob 2.4s ease-in-out infinite;
+    transform-origin: center bottom;
+    cursor: pointer;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-6px); }
+  }
+  /* While something is actually playing the pet dances instead of idling -
+     the one glance-level cue that the bar is live and not just stale. */
+  .pet.dancing {
+    animation: dance 0.62s ease-in-out infinite;
+  }
+  @keyframes dance {
+    0%, 100% { transform: translateY(0) rotate(-4deg); }
+    50%      { transform: translateY(-9px) rotate(4deg); }
+  }
+  .pet.jump {
+    animation: jump 0.55s ease-out;
+  }
+  @keyframes jump {
+    0%   { transform: translateY(0) scaleY(1); }
+    25%  { transform: translateY(0) scaleY(0.82); }
+    55%  { transform: translateY(-45px) scaleY(1.08); }
+    80%  { transform: translateY(0) scaleY(0.92); }
+    100% { transform: translateY(0) scaleY(1); }
+  }
+  .foot {
+    animation: stomp 2.4s ease-in-out infinite;
+    transform-origin: center top;
+  }
+  .footR { animation-delay: 1.2s; }
+  @keyframes stomp {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-3px); }
+  }
+  /* the three waves pulse outward-in, like a level meter */
+  .wave { animation: waveOn 1.6s ease-in-out infinite; }
+  .wave2 { animation-delay: 0.18s; }
+  .wave3 { animation-delay: 0.36s; }
+  @keyframes waveOn {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+  }
+  #eyesBlink { opacity: 0; }
+  .note { opacity: 0; }
+</style>
+</head>
+<body>
+<div id="stage">
+<!-- Now playing in Spotify, read from Windows' media session (SMTC) - see
+     read_smtc_media() in pet_app.py. dir="ltr" because track and artist names
+     are mostly latin and the time reads "0:12 / 3:45" left to right anyway. -->
+<div id="mediaBar" dir="ltr">
+  <div id="mediaTop"><span id="mediaTitle"></span><span id="mediaTime"></span></div>
+  <div id="mediaTrack"><div id="mediaFill"></div></div>
+</div>
+<div id="petWrap">
+<svg id="petSvg" class="pet" width="230" height="172" viewBox="0 0 200 150" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- shadow -->
+  <ellipse cx="100" cy="134" rx="42" ry="7" fill="#000000" opacity="0.15"/>
+
+  <!-- feet -->
+  <rect class="foot footL" x="70" y="108" width="26" height="20" rx="8" fill="#12A648" stroke="#FFF7F0" stroke-width="5"/>
+  <rect class="foot footR" x="104" y="108" width="26" height="20" rx="8" fill="#12A648" stroke="#FFF7F0" stroke-width="5"/>
+
+  <!-- body: the Spotify mark, given a face -->
+  <circle cx="100" cy="68" r="46" fill="#1DB954" stroke="#FFF7F0" stroke-width="5"/>
+
+  <!-- eyes -->
+  <g id="eyesDefault">
+    <ellipse cx="84" cy="56" rx="7" ry="9" fill="#0B2E17"/>
+    <ellipse cx="116" cy="56" rx="7" ry="9" fill="#0B2E17"/>
+    <circle cx="81.5" cy="52.5" r="2.4" fill="#FFFFFF" opacity="0.9"/>
+    <circle cx="113.5" cy="52.5" r="2.4" fill="#FFFFFF" opacity="0.9"/>
+  </g>
+  <g id="eyesBlink" fill="#0B2E17">
+    <rect x="77" y="54" width="14" height="4.5" rx="2.2"/>
+    <rect x="109" y="54" width="14" height="4.5" rx="2.2"/>
+  </g>
+
+  <!-- cheeks -->
+  <ellipse cx="68" cy="70" rx="7" ry="4.5" fill="#0B2E17" opacity="0.16"/>
+  <ellipse cx="132" cy="70" rx="7" ry="4.5" fill="#0B2E17" opacity="0.16"/>
+
+  <!-- the three waves -->
+  <g fill="none" stroke="#FFF7F0" stroke-linecap="round">
+    <path class="wave"  d="M72 85 Q100 73 130 87"  stroke-width="7"/>
+    <path class="wave wave2" d="M77 98 Q100 89 124 99"  stroke-width="6"/>
+    <path class="wave wave3" d="M82 109 Q100 102 118 109" stroke-width="5"/>
+  </g>
+
+  <!-- note burst on click -->
+  <text id="note1" class="note" x="140" y="30" font-size="20" fill="#1DB954">&#9835;</text>
+</svg>
+</div>
+</div>
+
+<script>
+  const pet = document.getElementById('petSvg');
+  const petWrap = document.getElementById('petWrap');
+  const note = document.getElementById('note1');
+  const eyesDefault = document.getElementById('eyesDefault');
+  const eyesBlink = document.getElementById('eyesBlink');
+  let animating = false;
+
+  pet.addEventListener('mouseenter', () => petWrap.classList.add('pet-hover'));
+  pet.addEventListener('mouseleave', () => petWrap.classList.remove('pet-hover'));
+
+  function blinkOnce() {
+    eyesDefault.style.opacity = '0';
+    eyesBlink.style.opacity = '1';
+    setTimeout(() => {
+      eyesDefault.style.opacity = '1';
+      eyesBlink.style.opacity = '0';
+    }, 140);
+  }
+
+  function scheduleBlink() {
+    setTimeout(() => { blinkOnce(); scheduleBlink(); }, 2600 + Math.random() * 2600);
+  }
+  scheduleBlink();
+
+  // Callable from Python (settings window) to live-resize the pet.
+  function applyPetScale(pct) {
+    petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
+  }
+
+  function handlePetClick() {
+    if (animating) return;
+    animating = true;
+    pet.classList.add('jump');
+
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_app) {
+      window.pywebview.api.open_app();
+    }
+
+    note.style.transition = 'none';
+    note.style.opacity = '1';
+    note.style.transform = 'translateY(0)';
+    requestAnimationFrame(() => {
+      note.style.transition = 'opacity 1.1s ease-out, transform 1.1s ease-out';
+      note.style.opacity = '0';
+      note.style.transform = 'translateY(-40px)';
+    });
+
+    setTimeout(() => {
+      pet.classList.remove('jump');
+      animating = false;
+    }, 600);
+  }
+
+  // ---- drag & drop (moves the actual native window via Python) --------
+  let dragStartX, dragStartY, isDragging = false, movedDistance = 0;
+  const DRAG_THRESHOLD = 6;
+
+  pet.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) {           // middle/right must not start a drag
+      if (e.button === 1) e.preventDefault();  // block middle-click autoscroll
+      return;
+    }
+    dragStartX = e.screenX;
+    dragStartY = e.screenY;
+    movedDistance = 0;
+    isDragging = false;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+      window.pywebview.api.start_drag();
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (dragStartX === undefined) return;
+    const dx = e.screenX - dragStartX;
+    const dy = e.screenY - dragStartY;
+    movedDistance += Math.abs(dx) + Math.abs(dy);
+    if (movedDistance > DRAG_THRESHOLD) {
+      isDragging = true;
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_move) {
+        window.pywebview.api.drag_move(dx, dy);
+      }
+      dragStartX = e.screenX;
+      dragStartY = e.screenY;
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragStartX === undefined) return;
+    if (isDragging) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
+        window.pywebview.api.drop();
+      }
+    } else {
+      handlePetClick();
+    }
+    dragStartX = undefined;
+    isDragging = false;
+  });
+
+  // Middle-click (scroll-wheel click) the pet -> open the native settings window.
+  pet.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings_window) {
+      window.pywebview.api.open_settings_window();
+    }
+  });
+
+  // Seed size from saved config once the bridge is ready.
+  window.addEventListener('pywebviewready', () => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_pet_config) {
+      window.pywebview.api.get_pet_config().then((cfg) => {
+        if (cfg && cfg.size) applyPetScale(cfg.size);
+      });
+    }
+    pollMedia();
+    setInterval(pollMedia, 1000);
+  });
+
+  // ---- now-playing bar ------------------------------------------------
+  function fmtTime(secs) {
+    const s = Math.max(0, Math.floor(secs));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor(s / 60) % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+  }
+
+  function pollMedia() {
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_media)) return;
+    window.pywebview.api.get_media().then((m) => {
+      const bar = document.getElementById('mediaBar');
+      // Spotify closed or nothing loaded: no bar at all rather than an empty
+      // one pretending to be at 0:00.
+      if (!m || !m.duration) {
+        bar.classList.remove('shown');
+        pet.classList.remove('dancing');
+        return;
+      }
+      document.getElementById('mediaTitle').textContent = m.title || '';
+      const frac = Math.max(0, Math.min(1, m.position / m.duration));
+      document.getElementById('mediaFill').style.transform = `scaleX(${frac})`;
+      document.getElementById('mediaTime').textContent =
+        `${fmtTime(m.position)} / ${fmtTime(m.duration)}`;
+      bar.classList.toggle('paused', !m.playing);
+      bar.classList.add('shown');
+      // Don't re-add: that would restart the dance loop on every 1s poll.
+      if (m.playing !== pet.classList.contains('dancing') && !animating) {
+        pet.classList.toggle('dancing', m.playing);
+      }
+    }).catch(() => {});
+  }
+</script>
+</body>
+</html>

@@ -24,6 +24,7 @@ PETS = {
     "vscode": "pets/vscode-pet.html",
     "curseforge": "pets/curseforge-pet.html",
     "chrome": "pets/chrome-pet.html",
+    "spotify": "pets/spotify-pet.html",
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
@@ -475,6 +476,20 @@ def launch_chrome():
         log("launch_chrome fallback failed:", exc)
 
 
+def launch_spotify():
+    """Open Spotify, or focus the running instance (the app the spotify-pet fronts for)."""
+    # Spotify ships as a packaged (MSIX) app on this machine, so there is no
+    # .exe to start - but it registers the `spotify:` URI scheme either way,
+    # which Windows resolves to whichever install is present. Falls back to
+    # the packaged app's AppUserModelID if the scheme isn't registered.
+    for target in ("spotify:", "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"):
+        try:
+            os.startfile(target)
+            return
+        except Exception as exc:
+            log("launch_spotify failed for", target, ":", exc)
+
+
 _watched_pets = set()  # hwnds that already have a sync_desktop_visibility watcher
 
 
@@ -715,16 +730,61 @@ def sync_desktop_visibility(hwnd, pet):
     threading.Thread(target=_watch, daemon=True).start()
 
 
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_APPWINDOW = 0x00040000
+
+
+def hide_from_taskbar(window):
+    """
+    Drop the taskbar/alt-tab button - before the window is ever shown.
+
+    WS_EX_TOOLWINDOW is only read by the shell at the moment a window first
+    becomes visible; flipping it later has no effect on an existing taskbar
+    button. That is why this used to live in apply_window_mode as a
+    hide -> set style -> re-show dance, running from the "loaded" event.
+
+    That dance was the bug behind both "the pets sometimes have a white
+    background" and "sometimes they show up as windows". pywebview makes a
+    transparent WebView2 window work with a Show()/Hide() sequence of its own
+    around WebView2 startup, plus another Show() from the NavigationStarting
+    handler - a hack its own source comments admit it does not understand
+    ("no idea why this works", platforms/winforms.py). Our extra
+    SW_HIDE/SW_SHOWNA landed in the middle of that, at a moment whose timing
+    depends on how far along the other four pets are in their own WebView2
+    startup - so it raced, differently on every login. A pet that lost the
+    race ended up with a WebView2 that never went transparent, which shows
+    the WinForms form's own SystemColors.Control backdrop: a plain, opaque,
+    near-white 340x220 rectangle. That is the "white background", and it is
+    also exactly what makes a pet "look like a window".
+
+    pywebview's `before_show` event fires on the GUI thread after the Form is
+    constructed (so window.native and its HWND already exist) and before
+    anything shows it. Setting the style there means the shell never sees a
+    normal window to begin with, so nothing has to be hidden and re-shown to
+    correct it - and WebView2's startup is left completely alone.
+
+    Must be called before webview.start() (windows are only really created
+    there, so the event has not fired yet).
+    """
+    if sys.platform != "win32":
+        return
+
+    def _before_show(window):
+        try:
+            hwnd = window.native.Handle.ToInt32()
+            style = USER32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            style = (style | WS_EX_TOOLWINDOW) & ~WS_EX_APPWINDOW
+            USER32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
+        except Exception as exc:
+            log("hide_from_taskbar failed:", exc)
+
+    window.events.before_show += _before_show
+
+
 def apply_window_mode(window, desktop, pet):
     """
-    Do every native-HWND tweak the pet needs, once, in order, on one thread.
-
-    This used to be two functions (hide_from_taskbar + apply_zorder) that each
-    spawned their own thread and each polled FindWindow independently. They
-    raced: hide_from_taskbar's ShowWindow(SW_SHOW) re-raises the window and
-    re-registers a taskbar button, so depending on which thread won, a pet
-    would *sometimes* show up as a normal window in the taskbar. One ordered
-    pass removes the race entirely.
+    Place the pet in the window stack, and keep it there.
 
     Topmost state goes through pywebview's own `window.on_top` instead of a
     raw SetWindowPos(HWND_TOPMOST/NOTOPMOST) hack: pywebview's WinForms
@@ -733,18 +793,16 @@ def apply_window_mode(window, desktop, pet):
     believing the window was still topmost when it wasn't (or vice versa) -
     a divergence between what the app thinks and what's actually on screen.
 
+    Taskbar/alt-tab hiding deliberately does NOT happen here - see
+    hide_from_taskbar() for why doing it from this (post-load) path broke
+    window transparency.
+
     desktop=False -> topmost, the classic always-above-the-taskbar pet.
     desktop=True  -> non-topmost; visibility is driven by
                      sync_desktop_visibility(): on show while the desktop is,
                      hidden otherwise.
     """
     if sys.platform != "win32":
-        return
-    try:
-        import win32gui
-        import win32con
-    except ImportError:
-        log("pywin32 not installed - pet will show in the taskbar. Run: pip install pywin32")
         return
 
     def _apply():
@@ -754,24 +812,7 @@ def apply_window_mode(window, desktop, pet):
             # always ready here - no FindWindow(title) polling needed.
             hwnd = window.native.Handle.ToInt32()
 
-            # 1) Drop the taskbar/alt-tab button. The ex-style swap only sticks
-            #    reliably while the window is hidden, and it must come back with
-            #    SW_SHOWNA - plain SW_SHOW activates the window, which steals
-            #    focus and lets the shell re-add the button.
-            #
-            #    win32gui.GetWindowLong/SetWindowLong hang forever when called
-            #    cross-thread on this machine (confirmed by direct repro: same
-            #    call via raw ctypes returns instantly, pywin32's wrapper never
-            #    returns) - the same class of bug as ShowWindow vs
-            #    ShowWindowAsync above, just in a spot that got missed. ctypes
-            #    calls the same user32 entry point directly, no pywin32 wrapper.
-            show_window_async(hwnd, win32con.SW_HIDE)
-            style = USER32.GetWindowLongW(hwnd, win32con.GWL_EXSTYLE)
-            style = (style | win32con.WS_EX_TOOLWINDOW) & ~win32con.WS_EX_APPWINDOW
-            USER32.SetWindowLongW(hwnd, win32con.GWL_EXSTYLE, style)
-            show_window_async(hwnd, win32con.SW_SHOWNA)
-
-            # 2) Place it in the stack.
+            # Place it in the stack.
             #
             #    Only when it actually has to change. pywebview's on_top
             #    getter reads a cached Python value, but its setter does
@@ -842,6 +883,141 @@ def read_activity():
     return data
 
 
+# ---------------------------------------------------------------- media ---
+# Two different sources, because the two apps expose "what is playing and how
+# far in" in two completely different ways:
+#
+#   Spotify -> SMTC (Windows' System Media Transport Controls), the same
+#              session data behind the volume-key media flyout. No config
+#              needed on Spotify's side.
+#   VLC     -> its own HTTP interface. VLC 3.x does not publish to SMTC at all
+#              (there is no such plugin in its plugins/ tree, and the media
+#              flyout stays empty while it plays), so SMTC would show an empty
+#              bar forever. install.ps1 enables the HTTP interface in vlcrc.
+VLC_HTTP_PORT = 8080
+VLC_HTTP_PASSWORD = "desktoppet"
+MEDIA_CACHE_SECS = 0.4  # the pages poll ~1/s; this only absorbs double-polls
+_media_cache = {}  # source -> (fetched_at, value)
+
+
+def read_vlc_media():
+    """
+    What VLC is playing right now, from its localhost HTTP interface.
+    Returns None when VLC is closed, stopped, or the interface is off (the
+    pet then just doesn't show a bar). Otherwise
+    {"title", "position", "duration", "playing"} with seconds as floats.
+    """
+    import base64
+    import urllib.request
+    import xml.etree.ElementTree as ET
+
+    url = f"http://127.0.0.1:{VLC_HTTP_PORT}/requests/status.xml"
+    # VLC's HTTP interface uses Basic auth with an empty username.
+    auth = base64.b64encode(f":{VLC_HTTP_PASSWORD}".encode()).decode()
+    req = urllib.request.Request(url, headers={"Authorization": "Basic " + auth})
+    try:
+        # Short timeout on purpose: this is polled from the UI. A dead or
+        # firewalled port must fail fast, not stall the bar.
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            root = ET.parse(resp).getroot()
+    except Exception:
+        return None  # VLC not running / interface not enabled - not an error
+
+    state = (root.findtext("state") or "").lower()
+    if state == "stopped":
+        return None
+    try:
+        duration = float(root.findtext("length") or 0)
+        position = float(root.findtext("time") or 0)
+    except ValueError:
+        return None
+    if duration <= 0:
+        return None  # live stream or nothing loaded: a progress bar is meaningless
+
+    title = None
+    meta = root.find("./information/category[@name='meta']")
+    if meta is not None:
+        # "title" is the tag if the file has one, "filename" always exists.
+        for key in ("now_playing", "title", "filename"):
+            el = meta.find(f"./info[@name='{key}']")
+            if el is not None and el.text:
+                title = el.text
+                break
+    return {
+        "title": title or "VLC",
+        "position": position,
+        "duration": duration,
+        "playing": state == "playing",
+    }
+
+
+def read_smtc_media(app_match):
+    """
+    What `app_match` (matched against the media session's source app id) is
+    playing right now, via Windows' System Media Transport Controls.
+    Returns the same shape as read_vlc_media(), or None.
+    """
+    import asyncio
+    import datetime as dt
+
+    try:
+        from winrt.windows.media.control import (
+            GlobalSystemMediaTransportControlsSessionManager as SessionManager,
+        )
+    except ImportError:
+        return None  # winrt packages not installed - pet just shows no bar
+
+    async def _read():
+        manager = await SessionManager.request_async()
+        for session in manager.get_sessions():
+            source = session.source_app_user_model_id or ""
+            if app_match.lower() not in source.lower():
+                continue
+            props = await session.try_get_media_properties_async()
+            timeline = session.get_timeline_properties()
+            duration = timeline.end_time.total_seconds()
+            position = timeline.position.total_seconds()
+            # PlaybackStatus.PLAYING == 4
+            playing = int(session.get_playback_info().playback_status) == 4
+            if playing:
+                # SMTC only refreshes `position` when the app pushes an
+                # update, which Spotify does every few seconds at best. Left
+                # raw, the bar would visibly stutter and lag; last_updated_time
+                # is exactly the anchor needed to carry it forward smoothly.
+                try:
+                    elapsed = (dt.datetime.now(dt.timezone.utc) - timeline.last_updated_time).total_seconds()
+                    position += max(0.0, elapsed)
+                except Exception:
+                    pass
+            if duration <= 0:
+                return None
+            title = props.title or ""
+            artist = props.artist or ""
+            return {
+                "title": f"{artist} - {title}" if artist and title else (title or artist or "Spotify"),
+                "position": min(position, duration),
+                "duration": duration,
+                "playing": playing,
+            }
+        return None
+
+    try:
+        return asyncio.run(_read())
+    except Exception as exc:
+        log("read_smtc_media failed:", exc)
+        return None
+
+
+def read_media(source):
+    """Cached front door for the pets' progress bars. source: 'vlc'|'spotify'."""
+    cached = _media_cache.get(source)
+    if cached and time.time() - cached[0] < MEDIA_CACHE_SECS:
+        return cached[1]
+    value = read_vlc_media() if source == "vlc" else read_smtc_media("spotify")
+    _media_cache[source] = (time.time(), value)
+    return value
+
+
 def get_pet_config(pet):
     """Everything the pet / settings pages need to render themselves."""
     cfg = load_config(pet)
@@ -888,6 +1064,15 @@ class Api:
     def get_activity(self):
         """Polled from JS on a short timer to drive the activity badge."""
         return read_activity()
+
+    def get_media(self):
+        """
+        Polled from JS to drive the VLC / Spotify progress bars. None for
+        every other pet, so one shared media-bar snippet can live in any page.
+        """
+        if self._pet not in ("vlc", "spotify"):
+            return None
+        return read_media(self._pet)
 
     def open_settings_window(self):
         """Middle-click the pet -> open settings in its own native window."""
@@ -1040,8 +1225,10 @@ def main():
     for i, pet in enumerate(pets):
         cfg = load_config(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
-        open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge, "chrome": launch_chrome}.get(pet, launch_claude_desktop)
-        window_title = {"vlc": "VLC Pet", "vscode": "VS Code Pet", "curseforge": "CurseForge Pet", "chrome": "Chrome Pet"}.get(pet, "Desktop Pet")
+        open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge,
+                       "chrome": launch_chrome, "spotify": launch_spotify}.get(pet, launch_claude_desktop)
+        window_title = {"vlc": "VLC Pet", "vscode": "VS Code Pet", "curseforge": "CurseForge Pet",
+                        "chrome": "Chrome Pet", "spotify": "Spotify Pet"}.get(pet, "Desktop Pet")
 
         # Reopen where the user last left it; fall back to the side-by-side layout.
         default_x = start_x + i * (WIN_W + gap)
@@ -1068,6 +1255,8 @@ def main():
             js_api=api,
         )
         api._window = window
+        # Must be armed before webview.start(); see hide_from_taskbar().
+        hide_from_taskbar(window)
 
         def _on_loaded(window=window, pet=pet):
             if sys.platform == "win32":

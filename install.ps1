@@ -42,6 +42,42 @@ Copy-Item -Path "$PSScriptRoot\claude-usage-statusline.ps1" -Destination $instal
 Copy-Item -Path "$PSScriptRoot\refresh_usage.py" -Destination $installDir -Force
 Copy-Item -Path "$PSScriptRoot\claude-activity-status.ps1" -Destination $installDir -Force
 
+# Give the VLC pet something to read a playback position from.
+#
+# VLC 3.x does not publish to Windows' media sessions (SMTC) at all - there is
+# no such plugin in its plugins\ tree - so the route every other app's progress
+# comes from is simply unavailable for it. Its own HTTP interface is the
+# supported alternative, but it is off by default and has to be enabled in
+# vlcrc. Bound to 127.0.0.1 and password-protected, so nothing is exposed off
+# this machine. VLC only reads vlcrc at startup: an already-running VLC has to
+# be restarted before the pet's bar appears.
+$vlcrc = "$env:APPDATA\vlc\vlcrc"
+if (Test-Path $vlcrc) {
+    $desired = @{
+        'extraintf'     = 'http'
+        'http-host'     = '127.0.0.1'
+        'http-port'     = '8080'
+        'http-password' = 'desktoppet'   # must match VLC_HTTP_PASSWORD in pet_app.py
+    }
+    $lines = Get-Content $vlcrc
+    foreach ($key in $desired.Keys) {
+        $value = $desired[$key]
+        # The setting exists in vlcrc already, commented out with its default.
+        # Rewrite that line in place so VLC keeps it in the section it expects,
+        # and only append if this build genuinely has no such key.
+        $pattern = "^#?$([regex]::Escape($key))=.*$"
+        if ($lines -match $pattern) {
+            $lines = $lines -replace $pattern, "$key=$value"
+        } else {
+            $lines += "$key=$value"
+        }
+    }
+    Set-Content -Path $vlcrc -Value $lines -Encoding UTF8
+    Write-Host "Enabled VLC's local HTTP interface (restart VLC for the pet's progress bar)."
+} else {
+    Write-Host "VLC config not found - skipping VLC progress-bar setup (run VLC once, then re-run this script)."
+}
+
 # Keep the usage gauges fed.
 #
 # Claude Code only renders its status line - and therefore only runs

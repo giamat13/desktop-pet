@@ -1,3 +1,9 @@
 pywebview
 pywin32
 pywinpty
+# Windows media sessions (SMTC) - what Spotify is playing and how far in.
+# pywinrt ships one package per WinRT namespace; Media.Control does not pull
+# Foundation in on its own, and its async calls fail at import time without it.
+winrt-Windows.Media.Control
+winrt-Windows.Foundation
+winrt-Windows.Foundation.Collections

@@ -14,12 +14,79 @@
   }
 
   .stage {
+    position: relative; /* anchors #mediaBar, which sits outside petWrap */
     width: 100%;
     height: 100vh;
     display: flex;
     align-items: flex-end;
     justify-content: center;
     background: transparent;
+  }
+
+  /* Now-playing bar. Deliberately a sibling of #petWrap, not part of the SVG:
+     the pet rides a size slider and a hop animation, and the bar must not.
+     Near-opaque dark backing with light text on purpose - the pet floats over
+     whatever is behind it, so anything relying on the backdrop's own contrast
+     is unreadable half the time. */
+  #mediaBar {
+    position: absolute;
+    top: 4px;
+    left: 12px;
+    right: 12px;
+    opacity: 0;
+    transition: opacity 0.3s ease-out;
+    pointer-events: none;
+    background: #12100FE6;
+    border-radius: 10px;
+    padding: 6px 10px 7px;
+    font-family: 'Courier New', monospace;
+    color: #FFFFFF;
+  }
+  /* Class-driven, never an inline opacity: `paused` has to be able to win
+     over `shown`, and an inline style would beat both. */
+  #mediaBar.shown { opacity: 1; }
+  #mediaBar.shown.paused { opacity: 0.62; }
+  /* Title and elapsed share one row on purpose. Stacked on three rows the bar
+     was ~55px tall and ran under the sprite, which paints over it (the pet is
+     later in the DOM) - the right third of the track was simply invisible. */
+  #mediaTop {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  #mediaTitle {
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: bold;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #mediaTrack {
+    height: 6px;
+    border-radius: 3px;
+    background: #FFFFFF33;
+    overflow: hidden;
+  }
+  #mediaFill {
+    height: 100%;
+    width: 100%;
+    background: #FF8A2A;
+    /* scaleX, not width: this is an always-on overlay that ticks once a
+       second forever, and transform stays off the layout path entirely.
+       #mediaTrack's overflow:hidden supplies the rounded ends. */
+    transform: scaleX(0);
+    transform-origin: left center;
+    /* matches the 1s poll, so the bar creeps instead of stepping */
+    transition: transform 1s linear;
+  }
+  #mediaTime {
+    flex: none;
+    font-size: 11px;
+    font-weight: bold;
+    opacity: 0.9;
   }
 
   #petWrap {
@@ -121,6 +188,13 @@
 </head>
 <body>
 <div class="stage" id="stage">
+<!-- Now playing in VLC, via its localhost HTTP interface (see read_vlc_media()
+     in pet_app.py). dir="ltr" because filenames and track titles are mostly
+     latin and the time reads "0:12 / 3:45" left to right regardless. -->
+<div id="mediaBar" dir="ltr">
+  <div id="mediaTop"><span id="mediaTitle"></span><span id="mediaTime"></span></div>
+  <div id="mediaTrack"><div id="mediaFill"></div></div>
+</div>
 <div id="petWrap">
 <svg id="vlcPetSvg" viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -233,7 +307,35 @@
         if (cfg && cfg.size) applyPetScale(cfg.size);
       });
     }
+    pollMedia();
+    setInterval(pollMedia, 1000);
   });
+
+  // ---- now-playing bar ------------------------------------------------
+  function fmtTime(secs) {
+    const s = Math.max(0, Math.floor(secs));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor(s / 60) % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    return h ? `${h}:${pad(m)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+  }
+
+  function pollMedia() {
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_media)) return;
+    window.pywebview.api.get_media().then((m) => {
+      const bar = document.getElementById('mediaBar');
+      // Nothing loaded, VLC closed, or the HTTP interface is off: no bar at
+      // all rather than an empty one pretending to be at 0:00.
+      if (!m || !m.duration) { bar.classList.remove('shown'); return; }
+      document.getElementById('mediaTitle').textContent = m.title || '';
+      const frac = Math.max(0, Math.min(1, m.position / m.duration));
+      document.getElementById('mediaFill').style.transform = `scaleX(${frac})`;
+      document.getElementById('mediaTime').textContent =
+        `${fmtTime(m.position)} / ${fmtTime(m.duration)}`;
+      bar.classList.toggle('paused', !m.playing);
+      bar.classList.add('shown');
+    }).catch(() => {});
+  }
 
   function triggerJump() {
     // restart even if mid-jump: strip classes, force reflow, re-add
