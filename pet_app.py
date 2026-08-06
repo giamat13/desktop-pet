@@ -25,6 +25,8 @@ PETS = {
     "curseforge": "pets/curseforge-pet.html",
     "chrome": "pets/chrome-pet.html",
     "spotify": "pets/spotify-pet.html",
+    "discord": "pets/discord-pet.html",
+    "system": "pets/system-pet.html",
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
@@ -494,6 +496,28 @@ def launch_spotify():
             log("launch_spotify failed for", target, ":", exc)
 
 
+def launch_discord():
+    """Open Discord, or focus the running instance (the app the discord-pet fronts for)."""
+    # Discord installs itself under a version-numbered subfolder with no
+    # stable path (app-1.0.9123, app-1.0.9130, ...) - glob for whichever is
+    # newest rather than hardcoding a version that will go stale.
+    base = os.path.expandvars(r"%LOCALAPPDATA%\Discord")
+    candidates = sorted(glob.glob(os.path.join(base, "app-*", "Discord.exe")), reverse=True)
+    for path in candidates:
+        if os.path.isfile(path):
+            if activate_app_window(path):
+                return
+            try:
+                os.startfile(path)
+                return
+            except Exception as exc:
+                log("launch_discord failed:", exc)
+    try:
+        os.startfile("discord")
+    except Exception as exc:
+        log("launch_discord fallback failed:", exc)
+
+
 _watched_pets = set()  # hwnds that already have a sync_desktop_visibility watcher
 
 
@@ -565,6 +589,11 @@ def _make_user32():
         "ShowWindowAsync": (ctypes.c_bool, [HWND, ctypes.c_int]),
         "SetWindowPos": (ctypes.c_bool, [HWND, HWND, ctypes.c_int, ctypes.c_int,
                                          ctypes.c_int, ctypes.c_int, ctypes.c_uint]),
+        # Timeout-safe title read for read_vscode_dirty(): see that function's
+        # docstring for why this is used instead of GetWindowText/GetWindowTextW.
+        "SendMessageTimeoutW": (ctypes.c_size_t, [HWND, ctypes.c_uint, ctypes.c_size_t,
+                                                  ctypes.c_wchar_p, ctypes.c_uint,
+                                                  ctypes.c_uint, ctypes.POINTER(ctypes.c_size_t)]),
     }
     for name, (restype, argtypes) in sigs.items():
         fn = getattr(u, name)
@@ -891,6 +920,11 @@ def read_activity():
                 data = json.load(f)
         except Exception:
             continue
+        # The session id lives in the file NAME only, never in the payload.
+        # The pet needs it as a field: "lock onto one session" and the split
+        # bands both have to follow the SAME session across polls, which they
+        # can't do if a session is only identifiable by "whichever is newest".
+        data["session_id"] = os.path.basename(path)[len("activity-"):-len(".json")]
         age = now - data.get("updated_at", 0)
         if age > ACTIVITY_KEEP_SECS:
             try:
@@ -909,11 +943,104 @@ def read_activity():
     if not working:
         return sessions[0]  # everything idle - the pet stands down
     primary = dict(working[0])
+    # Same shape as primary, minus the bookkeeping: in "split" mode every one
+    # of these drives its own band of the pet's body, so an "other" needs the
+    # exact same fields primary does to be classified (command included - it's
+    # what tells a git run apart from a plain shell run).
     primary["others"] = [
-        {"state": d.get("state"), "tool": d.get("tool"), "label": d.get("label")}
+        {"state": d.get("state"), "tool": d.get("tool"), "label": d.get("label"),
+         "command": d.get("command"), "session_id": d.get("session_id")}
         for d in working[1:]
     ]
     return primary
+
+
+# VS Code prefixes its window title with this bullet for the active file
+# whenever it has unsaved changes, e.g. "● app.py - myproject - Visual
+# Studio Code". No bullet -> nothing dirty.
+VSCODE_DIRTY_TITLE_MARKER = "●"
+
+
+def read_vscode_dirty():
+    """
+    Whether VS Code's active file has unsaved changes, sniffed from its own
+    window title. Returns {"dirty": bool}, or None if VS Code isn't running /
+    no window matched - same "app isn't there" contract as the other read_*
+    functions here.
+
+    Deliberately does NOT use win32gui.GetWindowText/GetWindowTextLength to
+    read the title: those SEND WM_GETTEXT(LENGTH) to the owning process and
+    block if it's busy or hung. desktop_is_showing()/_is_app_window already
+    hit this exact bug once - a hung target app froze pythonw.exe hard enough
+    for Windows to force-kill it (AppHangB1) - which is why that function
+    avoids title reads entirely. This one can't avoid the title (the dirty
+    marker lives in it), so instead it goes through
+    SendMessageTimeoutW(..., SMTO_ABORTIFHUNG, ...), which returns a failure
+    immediately instead of blocking on a hung Code.exe. This is called on a
+    JS poll timer (see Api.get_vscode_dirty), so a blocking read here would
+    eventually catch a stalled VS Code the same way.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import win32gui
+        import win32api
+        import win32process
+    except ImportError:
+        return None
+
+    found = []
+
+    def _cb(hwnd, _):
+        # IsWindowVisible is a plain state query - it does not send anything
+        # to the window's owning process, so it's safe on a poll timer.
+        if not win32gui.IsWindowVisible(hwnd):
+            return True
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            # PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+            proc = win32api.OpenProcess(0x0400 | 0x0010, False, pid)
+            try:
+                path = win32process.GetModuleFileNameEx(proc, 0)
+            finally:
+                win32api.CloseHandle(proc)
+            if os.path.basename(path).lower() == "code.exe":
+                found.append(hwnd)
+        except Exception:
+            pass  # most PIDs simply aren't ours to open - not an error
+        return True
+
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except Exception as exc:
+        log("read_vscode_dirty enum failed:", exc)
+        return None
+
+    if not found:
+        return None  # VS Code isn't running
+
+    WM_GETTEXT = 0x000D
+    SMTO_ABORTIFHUNG = 0x0002
+    TIMEOUT_MS = 250  # second line of defense behind SMTO_ABORTIFHUNG
+    BUF_LEN = 512
+    got_title = False
+
+    for hwnd in found:
+        buf = ctypes.create_unicode_buffer(BUF_LEN)
+        result = ctypes.c_size_t()
+        ok = USER32.SendMessageTimeoutW(
+            ctypes.c_void_p(hwnd), WM_GETTEXT, BUF_LEN, buf,
+            SMTO_ABORTIFHUNG, TIMEOUT_MS, ctypes.byref(result),
+        )
+        if not ok:
+            continue  # hung/unresponsive window - skip it, not an error
+        got_title = True
+        if VSCODE_DIRTY_TITLE_MARKER in buf.value:
+            return {"dirty": True}
+
+    # Found window(s) but couldn't read any title (all timed out): treat as
+    # absent rather than guessing at a dirty state we never actually saw.
+    return {"dirty": False} if got_title else None
 
 
 # ---------------------------------------------------------------- media ---
@@ -976,12 +1103,23 @@ def read_vlc_media():
             if el is not None and el.text:
                 title = el.text
                 break
-    return {
+
+    media = {
         "title": title or "VLC",
         "position": position,
         "duration": duration,
         "playing": state == "playing",
     }
+    # VLC's own 0-256(-ish) scale, 256 == 100%; users can boost past that in
+    # VLC's UI, hence the clamp. Best-effort only: a bad/missing <volume> just
+    # omits the key rather than breaking the rest of the now-playing bar.
+    raw_volume = root.findtext("volume")
+    if raw_volume is not None:
+        try:
+            media["volume"] = max(0.0, min(1.0, float(raw_volume) / 256.0))
+        except ValueError:
+            pass
+    return media
 
 
 def read_smtc_media(app_match):
@@ -1041,23 +1179,129 @@ def read_smtc_media(app_match):
         return None
 
 
+def read_spotify_volume():
+    """
+    Spotify's own playback volume (0.0-1.0), via the Windows Core Audio
+    Session API - the same data behind the Volume Mixer flyout. SMTC (used by
+    read_smtc_media above) has no volume field at all, so this is a second,
+    separate source scoped to whichever process owns Spotify's audio session.
+    Returns None on any failure - Spotify not running, pycaw not installed,
+    no matching session - same graceful-absence contract as the other readers
+    here; the caller treats a missing volume as "dance at default intensity",
+    not an error.
+    """
+    try:
+        from pycaw.pycaw import AudioUtilities
+    except ImportError:
+        return None  # pycaw not installed
+
+    try:
+        for session in AudioUtilities.GetAllSessions():
+            proc = session.Process
+            if not proc or proc.name().lower() != "spotify.exe":
+                continue
+            volume = session.SimpleAudioVolume
+            if volume.GetMute():
+                return 0.0  # muted session: don't dance to silence
+            return max(0.0, min(1.0, volume.GetMasterVolume()))
+    except Exception as exc:
+        log("read_spotify_volume failed:", exc)
+    return None
+
+
 def read_media(source):
     """Cached front door for the pets' progress bars. source: 'vlc'|'spotify'."""
     cached = _media_cache.get(source)
     if cached and time.time() - cached[0] < MEDIA_CACHE_SECS:
         return cached[1]
-    value = read_vlc_media() if source == "vlc" else read_smtc_media("spotify")
+    if source == "vlc":
+        value = read_vlc_media()
+    else:
+        value = read_smtc_media("spotify")
+        if value is not None:
+            value["volume"] = read_spotify_volume()
     _media_cache[source] = (time.time(), value)
     return value
+
+
+def read_discord_voice_state():
+    """
+    Best-effort guess at whether Discord currently has an active voice call,
+    read from Windows' own per-app microphone usage tracker (the same data
+    behind Settings > Privacy > Microphone > "recently used"). There is no
+    public Discord API involved - LastUsedTimeStop == 0 means SOME process
+    matching "discord.exe" is holding the mic open RIGHT NOW, which is a
+    decent proxy for "in a call" but not proof (push-to-talk armed-but-silent
+    also counts as "using" the mic). Returns {"in_call": bool}, or None only
+    when the registry shape itself can't be read at all (so the pet shows
+    its idle look rather than guessing from nothing).
+    """
+    import winreg
+
+    base = (
+        r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager"
+        r"\ConsentStore\microphone\NonPackaged"
+    )
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base) as key:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(key, i)
+                except OSError:
+                    break
+                i += 1
+                if "discord.exe" not in sub.lower():
+                    continue
+                try:
+                    with winreg.OpenKey(key, sub) as sk:
+                        stop, _ = winreg.QueryValueEx(sk, "LastUsedTimeStop")
+                        return {"in_call": stop == 0}
+                except OSError:
+                    continue
+            return {"in_call": False}  # Discord never touched the mic (yet)
+    except OSError:
+        return None  # this key doesn't exist on this Windows build/edition
+
+
+def read_system_health():
+    """
+    CPU/RAM/battery snapshot for the system-health pet - the one pet with no
+    target app of its own. battery_pct/on_battery are None on any desktop
+    (psutil.sensors_battery() returns None with no battery at all), so the
+    pet just hides that gauge instead of showing a fake one.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return None
+    try:
+        cpu_pct = psutil.cpu_percent(interval=None)
+        ram_pct = psutil.virtual_memory().percent
+        battery = psutil.sensors_battery()
+        return {
+            "cpu_pct": cpu_pct,
+            "ram_pct": ram_pct,
+            "battery_pct": battery.percent if battery else None,
+            "on_battery": (not battery.power_plugged) if battery else None,
+        }
+    except Exception as exc:
+        log("read_system_health failed:", exc)
+        return None
 
 
 def get_pet_config(pet):
     """Everything the pet / settings pages need to render themselves."""
     cfg = load_config(pet)
     return {
+        "pet": pet,  # settings.html shows the Claude-only controls off this
         "margin": get_margin(pet),
         "size": cfg.get("size", 100),
         "position": cfg.get("position", "taskbar"),
+        # What the pet does with several live Claude Code sessions: "split"
+        # (default) divides its body into one band per session, "lock" follows
+        # a single session and ignores the rest. Claude pet only.
+        "session_mode": cfg.get("session_mode", "split"),
     }
 
 
@@ -1107,6 +1351,27 @@ class Api:
             return None
         return read_media(self._pet)
 
+    def get_vscode_dirty(self):
+        """Polled from JS to drive the unsaved-changes indicator. None for
+        every other pet, same gating as get_media()."""
+        if self._pet != "vscode":
+            return None
+        return read_vscode_dirty()
+
+    def get_discord_voice(self):
+        """Polled from JS to drive the "in a call" indicator. None for every
+        other pet, same gating as get_media()."""
+        if self._pet != "discord":
+            return None
+        return read_discord_voice_state()
+
+    def get_system_health(self):
+        """Polled from JS to drive the CPU/RAM/battery gauges. None for
+        every other pet, same gating as get_media()."""
+        if self._pet != "system":
+            return None
+        return read_system_health()
+
     def open_settings_window(self):
         """Middle-click the pet -> open settings in its own native window."""
         try:
@@ -1117,7 +1382,9 @@ class Api:
                 title="הגדרות",
                 url=SETTINGS_PATH,
                 width=320,
-                height=340,
+                # Claude gets one extra row (multi-session mode); the row is
+                # hidden for every other pet, so their window stays short.
+                height=420 if self._pet == "claude" else 340,
                 on_top=True,
                 resizable=False,
                 js_api=sapi,
@@ -1236,6 +1503,22 @@ class SettingsApi:
         except Exception as exc:
             log("set_size failed:", exc)
 
+    def set_session_mode(self, mode):
+        """
+        Multi-session behaviour: "split" (body divides into one band per live
+        session) or "lock" (follow one session, ignore the rest). Pushed to the
+        pet page live, same as set_size - the page caches the mode instead of
+        re-reading config on every 1.2s poll, so it has to be told.
+        """
+        try:
+            if mode not in ("lock", "split"):
+                return
+            update_config(self._pet, session_mode=mode)
+            if self._pet_window:
+                self._pet_window.evaluate_js(f"applySessionMode('{mode}')")
+        except Exception as exc:
+            log("set_session_mode failed:", exc)
+
     def close_settings(self):
         try:
             if self._window:
@@ -1259,9 +1542,13 @@ def main():
         cfg = load_config(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
         open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge,
-                       "chrome": launch_chrome, "spotify": launch_spotify}.get(pet, launch_claude_desktop)
+                       "chrome": launch_chrome, "spotify": launch_spotify, "discord": launch_discord,
+                       # No app fronts the system-health pet - a click opens Task Manager,
+                       # the closest thing to "the app this pet is about".
+                       "system": lambda: os.startfile("taskmgr")}.get(pet, launch_claude_desktop)
         window_title = {"vlc": "VLC Pet", "vscode": "VS Code Pet", "curseforge": "CurseForge Pet",
-                        "chrome": "Chrome Pet", "spotify": "Spotify Pet"}.get(pet, "Desktop Pet")
+                        "chrome": "Chrome Pet", "spotify": "Spotify Pet", "discord": "Discord Pet",
+                        "system": "System Pet"}.get(pet, "Desktop Pet")
 
         # Reopen where the user last left it; fall back to the side-by-side layout.
         default_x = start_x + i * (WIN_W + gap)

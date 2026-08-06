@@ -22,9 +22,29 @@
     background: transparent;
   }
   #petWrap {
+    /* position:relative earns its keep twice over in split mode: it makes the
+       band clones' offsetParent (so they can be pinned exactly over the
+       original with offsetLeft/offsetTop) and their containing block. */
+    position: relative;
     transition: transform 0.2s ease-out;
     transform-origin: center bottom;
     transform: scale(var(--pet-scale, 1));
+  }
+  /* Split mode: one clone of the whole pet per EXTRA live session, stacked
+     exactly on top of the original and clipped to its own vertical band, so
+     the mascot reads as one body torn into N independently animated strips.
+     pointer-events:none keeps every click/drag/hover on the original
+     underneath - the clones are pure decoration. */
+  .petBand {
+    position: absolute;
+    /* 0,0 of #petWrap IS the original svg's top-left: the wrapper is a flex
+       item sized to fit-content, so it wraps the one in-flow child exactly.
+       Set here rather than from JS on purpose - an <svg> has no offsetLeft /
+       offsetTop (those are HTMLElement-only, and read undefined), so
+       measuring it in script silently produces no position at all. */
+    left: 0;
+    top: 0;
+    pointer-events: none;
   }
   #petWrap.pet-hover {
     transform: scale(calc(var(--pet-scale, 1) * 1.08)) rotate(-3deg);
@@ -162,6 +182,7 @@ animation: bob 2.2s ease-in-out infinite;
      click-jump must come last to win. */
   .pet.act-think  { animation: actThink 1.5s ease-in-out infinite; }
   .pet.act-shell  { animation: actShell 0.34s steps(2, end) infinite; }
+  .pet.act-git    { animation: actGit 0.5s ease-in-out infinite; }
   .pet.act-pwsh   { animation: actPwsh 0.46s steps(3, end) infinite; }
   .pet.act-write  { animation: actWrite 0.5s ease-in-out infinite; }
   .pet.act-edit   { animation: actEdit 0.38s ease-in-out infinite; }
@@ -184,6 +205,15 @@ animation: bob 2.2s ease-in-out infinite;
     0%   { transform: translate(-2px, 0); }
     50%  { transform: translate(2px, -2px); }
     100% { transform: translate(-2px, 0); }
+  }
+  /* git is a shell command too, but git commit/push/pull are a stamping,
+     deliberate beat rather than the raw shell's rattling judder - a slower
+     "commit" thump with a settle, so it reads as its own kind of work rather
+     than just a recolor of act-shell */
+  @keyframes actGit {
+    0%, 100% { transform: translateY(0) scale(1); }
+    35%      { transform: translateY(-9px) scale(1.06); }
+    60%      { transform: translateY(1px) scale(0.95); }
   }
   /* same judder as Bash but heavier and on a 3-step ratchet, so the two
      shells are told apart by rhythm rather than by reading the badge */
@@ -261,6 +291,17 @@ animation: bob 2.2s ease-in-out infinite;
     0%, 100% { filter: drop-shadow(0 0 3px #F0B94A99); }
     50%      { filter: drop-shadow(0 0 15px #FFC65C); }
   }
+  /* ~60s unanswered: the glow itself quickens and burns hotter, on top of the
+     same actAsk lean rather than replacing it - a layered class, same
+     approach .stuck already takes relative to act-*. */
+  .pet.act-ask.ask-escalated {
+    animation: actAsk 0.7s ease-in-out infinite,
+               askGlowEscalated 0.5s ease-in-out infinite;
+  }
+  @keyframes askGlowEscalated {
+    0%, 100% { filter: drop-shadow(0 0 6px #E0431ACC); }
+    50%      { filter: drop-shadow(0 0 22px #FF5C3A); }
+  }
   #askBubble {
     position: absolute;
     /* Centred above the pet's head, not off in a corner: the corners are
@@ -324,6 +365,28 @@ animation: bob 2.2s ease-in-out infinite;
     0%   { box-shadow: 0 0 0 0 #F0B94ACC; }
     100% { box-shadow: 0 0 0 14px #F0B94A00; }
   }
+  /* ~60s of no answer (ASK_ESCALATE_MS in the JS): bigger, faster, and
+     blinking - layered via higher specificity (.on.escalated beats .on) so
+     the base pop-in/bob/ring keep running underneath rather than being
+     torn out and rebuilt. */
+  #askBubble.on.escalated {
+    animation: askPop 0.42s ease-out forwards,
+               askBobEscalated 0.7s ease-in-out infinite,
+               askRingEscalated 0.9s ease-out infinite,
+               askBlink 0.5s steps(1, end) infinite;
+  }
+  @keyframes askBobEscalated {
+    0%, 100% { opacity: 1; transform: scale(1.2) translateY(0) rotate(-7deg); }
+    50%      { opacity: 1; transform: scale(1.32) translateY(-7px) rotate(7deg); }
+  }
+  @keyframes askRingEscalated {
+    0%   { box-shadow: 0 0 0 0 #E0431ACC; }
+    100% { box-shadow: 0 0 0 20px #E0431A00; }
+  }
+  @keyframes askBlink {
+    0%, 49%   { background: #FFD79A; }
+    50%, 100% { background: #FF8A5C; }
+  }
   #activityBadge.ask {
     background: #C9481FF2;
     color: #FFF3E2;
@@ -364,6 +427,29 @@ animation: bob 2.2s ease-in-out infinite;
     0%   { opacity: 0.9; transform: translateY(0); }
     80%  { opacity: 0.35; transform: translateY(14px); }
     100% { opacity: 0; transform: translateY(16px); }
+  }
+  /* worse than plain near-limit: pegged near the cap AND the reset is far
+     off, so there's no relief coming - a hotter red and a faster drip.
+     Declared after the near-limit rules above so it wins the specificity
+     tie (same two-class-plus-id shape) when both classes are present. */
+  .pet.near-limit.critical-limit #petBody { fill: #A8291B; }
+  .pet.near-limit.critical-limit #sweat {
+    animation: sweatDrip 0.7s ease-in infinite;
+  }
+  /* ---- near limit, but the reset is basically already here -----------
+     The opposite reaction to the same near-limit state: relief instead of
+     dread. Layered as a second class on top of near-limit rather than
+     replacing it - same higher-specificity-wins approach as .stuck vs
+     act-*. Softer amber tint instead of the stressed red, a gentle
+     breathing pulse instead of the sweat drip. */
+  .pet.near-limit.resetting-soon #petBody {
+    fill: #E8B863;
+    animation: reliefPulse 1.6s ease-in-out infinite;
+  }
+  .pet.near-limit.resetting-soon #sweat { opacity: 0; animation: none; }
+  @keyframes reliefPulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.8; }
   }
 
   /* ---- stuck tool ----------------------------------------------------
@@ -445,13 +531,16 @@ animation: bob 2.2s ease-in-out infinite;
   <!-- default eyes -->
   <!-- The glyphs are swapped per activity from pollActivity(), not duplicated
        into one <g> per state - two text nodes cover all of them. -->
-  <g id="eyesDefault" font-family="Courier New, monospace" font-weight="bold" fill="#F0997B" text-anchor="middle">
-    <text id="eyeL" x="82" y="59" font-size="24">&lt;</text>
-    <text id="eyeR" x="118" y="59" font-size="24">&gt;</text>
+  <!-- The duplicated class= on each of these is what split mode looks them up
+       by: a cloned band carries the same ids, so getElementById would only
+       ever find the original's. Ids stay because the CSS keys off them. -->
+  <g id="eyesDefault" class="eyesDefault" font-family="Courier New, monospace" font-weight="bold" fill="#F0997B" text-anchor="middle">
+    <text id="eyeL" class="eyeL" x="82" y="59" font-size="24">&lt;</text>
+    <text id="eyeR" class="eyeR" x="118" y="59" font-size="24">&gt;</text>
   </g>
 
   <!-- blink eyes -->
-  <g id="eyesBlink" fill="#F0997B">
+  <g id="eyesBlink" class="eyesBlink" fill="#F0997B">
     <rect x="72" y="49" width="20" height="5.5" rx="2.5"/>
     <rect x="108" y="49" width="20" height="5.5" rx="2.5"/>
   </g>
@@ -530,14 +619,19 @@ animation: bob 2.2s ease-in-out infinite;
 <script>
   const pet = document.getElementById('petSvg');
   const petWrap = document.getElementById('petWrap');
-  pet.addEventListener('mouseenter', () => petWrap.classList.add('pet-hover'));
-  pet.addEventListener('mouseleave', () => petWrap.classList.remove('pet-hover'));
+  // Bound to the WRAPPER, not the svg: in split mode the original svg is
+  // clipped down to its own band, and a clip-path removes the clipped-away
+  // area from hit-testing too - so half the mascot would stop responding to
+  // clicks/drag/hover. The wrapper is the same box and is never clipped.
+  petWrap.addEventListener('mouseenter', () => petWrap.classList.add('pet-hover'));
+  petWrap.addEventListener('mouseleave', () => petWrap.classList.remove('pet-hover'));
   const heart = document.getElementById('heart1');
   const bubbleGroup = document.getElementById('bubbleGroup');
   const bubbleText = document.getElementById('bubbleText');
   const eyesDefault = document.getElementById('eyesDefault');
   const eyesBlink = document.getElementById('eyesBlink');
   const eyesHappy = document.getElementById('eyesHappy');
+  const petBands = [];   // split-mode clones, one per band AFTER the first
   let animating = false;
 
   const phrases = ['> hi_', '> :)_', '> ok_', '> run_', '> yo_'];
@@ -545,10 +639,22 @@ animation: bob 2.2s ease-in-out infinite;
   function blinkOnce() {
     eyesDefault.style.opacity = '0';
     eyesBlink.style.opacity = '1';
+    blinkBands('0', '1');
     setTimeout(() => {
       eyesDefault.style.opacity = '1';
       eyesBlink.style.opacity = '0';
+      blinkBands('1', '0');
     }, 140);
+  }
+
+  // Split mode only: the clone bands blink with the original, otherwise just
+  // one strip of the face would ever close its eyes. No-op with no clones,
+  // which is every single-session moment - see petBands below.
+  function blinkBands(defaultOpacity, blinkOpacity) {
+    petBands.forEach((band) => {
+      band.querySelector('.eyesDefault').style.opacity = defaultOpacity;
+      band.querySelector('.eyesBlink').style.opacity = blinkOpacity;
+    });
   }
 
   function scheduleBlink() {
@@ -604,7 +710,7 @@ animation: bob 2.2s ease-in-out infinite;
   let dragStartX, dragStartY, isDragging = false, movedDistance = 0;
   const DRAG_THRESHOLD = 6;
 
-  pet.addEventListener('mousedown', (e) => {
+  petWrap.addEventListener('mousedown', (e) => {
     if (e.button !== 0) {           // middle/right must not start a drag
       if (e.button === 1) e.preventDefault();  // block middle-click autoscroll
       return;
@@ -651,6 +757,7 @@ animation: bob 2.2s ease-in-out infinite;
     if (window.pywebview && window.pywebview.api && window.pywebview.api.get_pet_config) {
       window.pywebview.api.get_pet_config().then((cfg) => {
         if (cfg && cfg.size) applyPetScale(cfg.size);
+        if (cfg) applySessionMode(cfg.session_mode);   // unset/unknown -> split
       });
     }
     pollUsage();
@@ -671,16 +778,23 @@ animation: bob 2.2s ease-in-out infinite;
   }
 
   // resets_at comes either as epoch seconds (real claude-usage-statusline.ps1
-  // output) or an ISO string (test fixtures) - handle both.
+  // output) or an ISO string (test fixtures) - handle both. Factored out of
+  // formatResetIn so pollUsage() can also ask "how soon" without
+  // reimplementing the epoch/ISO parsing.
+  function minutesToReset(resetsAt) {
+    if (resetsAt == null) return null;
+    const ts = typeof resetsAt === 'number' ? resetsAt * 1000 : Date.parse(resetsAt);
+    if (!ts || Number.isNaN(ts)) return null;
+    const mins = Math.round((ts - Date.now()) / 60000);
+    return mins > 0 ? mins : null;
+  }
+
   // Rendered as "in 3h20m" rather than a bare "3h20m": the countdown sits
   // under a percentage, and without the preposition it reads as another
   // quantity of usage instead of the time until the quota comes back.
   function formatResetIn(resetsAt) {
-    if (resetsAt == null) return '';
-    const ts = typeof resetsAt === 'number' ? resetsAt * 1000 : Date.parse(resetsAt);
-    if (!ts || Number.isNaN(ts)) return '';
-    const mins = Math.round((ts - Date.now()) / 60000);
-    if (mins <= 0) return '';
+    const mins = minutesToReset(resetsAt);
+    if (mins == null) return '';
     const hrs = Math.floor(mins / 60);
     // h:mm, never "2ש39ד" - Hebrew letters interleaved with digits is exactly
     // what the bidi algorithm tears apart, and it also overflows the pill.
@@ -708,14 +822,30 @@ animation: bob 2.2s ease-in-out infinite;
   // the corner already reports every intermediate percentage, so the
   // character reacting all the way from 1% would just be noise.
   const NEAR_LIMIT_PCT = 85;
+  // Under this many minutes-to-reset, being near the cap stops reading as
+  // "about to run out" and starts reading as "already basically reset" -
+  // the pet should anticipate relief, not dread, when the clock is this
+  // close. Picked as "the reset pill would show single-digit minutes".
+  const RESET_SOON_MINS = 15;
+  // The one tier worse than plain near-limit: pegged at (near) 100% AND the
+  // reset is nowhere close, so there's no relief to anticipate either.
+  const CRITICAL_LIMIT_PCT = 95;
 
   function pollUsage() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_usage)) return;
     window.pywebview.api.get_usage().then((u) => {
       const fiveHourPct = u && u.five_hour ? u.five_hour.used_percentage : null;
-      setGauge('gaugeLive', fiveHourPct, u && u.five_hour ? u.five_hour.resets_at : null);
+      const fiveHourResetsAt = u && u.five_hour ? u.five_hour.resets_at : null;
+      setGauge('gaugeLive', fiveHourPct, fiveHourResetsAt);
       setGauge('gaugeWeek', u && u.seven_day ? u.seven_day.used_percentage : null, u && u.seven_day ? u.seven_day.resets_at : null);
-      pet.classList.toggle('near-limit', fiveHourPct != null && fiveHourPct >= NEAR_LIMIT_PCT);
+      const nearLimit = fiveHourPct != null && fiveHourPct >= NEAR_LIMIT_PCT;
+      const minsLeft = minutesToReset(fiveHourResetsAt);
+      const resettingSoon = nearLimit && minsLeft != null && minsLeft <= RESET_SOON_MINS;
+      pet.classList.toggle('near-limit', nearLimit);
+      pet.classList.toggle('resetting-soon', resettingSoon);
+      // Mutually exclusive with resetting-soon on purpose: relief and dread
+      // are opposite reactions to the same "near-limit" state, not a stack.
+      pet.classList.toggle('critical-limit', nearLimit && !resettingSoon && fiveHourPct >= CRITICAL_LIMIT_PCT);
     }).catch(() => {});
   }
 
@@ -756,10 +886,10 @@ animation: bob 2.2s ease-in-out infinite;
     [/^(Agent|Task|SendMessage|Skill)$/i, 'act-agent'],
     [/browser|fetch|search/i, 'act-web'],
   ];
-  const ALL_ACT_CLASSES = ['act-think', 'act-shell', 'act-pwsh', 'act-write',
-                           'act-edit', 'act-search', 'act-read', 'act-todo',
-                           'act-mcp', 'act-web', 'act-ask', 'act-agent',
-                           ACT_DEFAULT];
+  const ALL_ACT_CLASSES = ['act-think', 'act-shell', 'act-git', 'act-pwsh',
+                           'act-write', 'act-edit', 'act-search', 'act-read',
+                           'act-todo', 'act-mcp', 'act-web', 'act-ask',
+                           'act-agent', ACT_DEFAULT];
 
   // The face changes with the body. Motion alone reads from across the room
   // but is ambiguous up close - "tilting" and "leaning" are the same gesture
@@ -768,6 +898,7 @@ animation: bob 2.2s ease-in-out infinite;
   const ACT_EYES = {
     'act-think':  ['o', 'o'],   // wide, pondering
     'act-shell':  ['$', '$'],   // a shell prompt in each eye
+    'act-git':    ['Y', 'Y'],   // a branch/merge fork, git's own glyph
     'act-pwsh':   ['>', '>'],   // the other shell's prompt
     'act-write':  ['=', '='],   // narrowed, concentrating
     'act-edit':   ['/', '\\'],  // nib strokes, picking at a line
@@ -789,11 +920,29 @@ animation: bob 2.2s ease-in-out infinite;
     eyeR.textContent = r;
   }
 
+  // Commands worth splitting out of the generic act-shell bucket, checked
+  // against a.command (the raw shell text claude-activity-status.ps1 now
+  // captures for Bash-family tools). git is the flagship: common enough, and
+  // distinctive enough a personality, to earn its own animation. A second
+  // command family can join this list later without any new machinery - one
+  // more [regex, class] pair here plus a CSS animation for it.
+  const ACT_SHELL_SUBRULES = [
+    [/^\s*git\b/i, 'act-git'],
+  ];
+
   function activityClass(a) {
     if (!a || a.state === 'idle') return null;
     if (a.state !== 'tool' || !a.tool) return 'act-think';
     const name = shortToolName(a.tool);
-    for (const [re, cls] of ACT_RULES) if (re.test(name)) return cls;
+    for (const [re, cls] of ACT_RULES) {
+      if (!re.test(name)) continue;
+      if (cls === 'act-shell' && a.command) {
+        for (const [subRe, subCls] of ACT_SHELL_SUBRULES) {
+          if (subRe.test(a.command)) return subCls;
+        }
+      }
+      return cls;
+    }
     // An MCP tool whose short name matched a rule above keeps that rule on
     // purpose (browser_navigate really is web work). Only the leftovers land
     // here - and "some server is doing something" is still more informative
@@ -874,13 +1023,158 @@ animation: bob 2.2s ease-in-out infinite;
     pet.classList.toggle('stuck', Date.now() - toolStartedAt > STUCK_MS);
   }
 
+  // Same house pattern as updateStuck: activity.json has no started_at, so
+  // elapsed time is tracked client-side across 1.2s polls. Keyed on
+  // tool/label rather than a question id (there isn't one) - a brand new
+  // question after you answer the last one still shows up as a fresh
+  // AskUserQuestion call, which is enough to restart the clock instead of
+  // carrying over a stale escalation from the previous question.
+  const ASK_ESCALATE_MS = 60000;
+  let lastAskKey = null;
+  let askStartedAt = 0;
+
+  function updateAskEscalation(a, cls) {
+    if (cls !== 'act-ask') {
+      lastAskKey = null;
+      askBubble.classList.remove('escalated');
+      pet.classList.remove('ask-escalated');
+      return;
+    }
+    const key = (a.tool || '') + '|' + (a.label || '');
+    if (key !== lastAskKey) {
+      lastAskKey = key;
+      askStartedAt = Date.now();
+    }
+    const escalated = Date.now() - askStartedAt > ASK_ESCALATE_MS;
+    askBubble.classList.toggle('escalated', escalated);
+    pet.classList.toggle('ask-escalated', escalated);
+  }
+
+  // ---------------------------------------------------------------------
+  // Several Claude Code sessions at once. Two answers, picked in settings:
+  //
+  //   'split' (default) - the body is physically divided into one vertical
+  //     band per live session, each band animating ITS session's activity.
+  //     N is whatever is live right now: 2, 5, 11, no special cases.
+  //   'lock' - one session drives the whole body and keeps it until it stops
+  //     working, instead of the body hopping to whichever session moved last.
+  //
+  // Both are pure display policy over the sessions the backend already
+  // reports; read_activity() still picks "primary" the same way it always did.
+  let sessionMode = 'split';
+
+  function applySessionMode(mode) {
+    // Called from Python when the setting changes, so switching modes takes
+    // effect without restarting the pet. Anything unknown means split.
+    sessionMode = mode === 'lock' ? 'lock' : 'split';
+  }
+
+  // The session lock mode is holding on to. Released only when that session
+  // stops reporting as working - re-deciding every poll is the exact
+  // behaviour lock mode exists to suppress.
+  let lockedSessionId = null;
+
+  // Band order is by session id, NOT by recency: two busy sessions swap which
+  // one is "newest" every couple of seconds, and ordering bands by that would
+  // make the halves of the pet trade places constantly. The id is arbitrary
+  // but it holds still.
+  function bandOrder(sessions) {
+    return sessions.slice().sort((x, y) =>
+      String(x.session_id || '').localeCompare(String(y.session_id || '')));
+  }
+
+  function pickBodySession(sessions, primary) {
+    if (sessions.length < 2) {
+      // Lock onto the only session there is, so that when a second one shows
+      // up the body stays with the one you were already watching.
+      lockedSessionId = sessions.length ? (sessions[0].session_id || null) : null;
+      return primary;
+    }
+    if (sessionMode === 'lock') {
+      const held = sessions.find((s) => s.session_id && s.session_id === lockedSessionId);
+      if (held) return held;
+      lockedSessionId = primary.session_id || null;   // lock died -> adopt the new primary
+      return primary;
+    }
+    // Split: the original svg is band 0 and can't be moved, so the body (and
+    // with it the badge, the eyes, the stuck/ask treatment) follows band 0.
+    return bandOrder(sessions)[0];
+  }
+
+  // Band i of n covers [i/n, (i+1)/n] of the width. Written as insets from
+  // each edge: left inset i/n, right inset 1-(i+1)/n. Band i's right edge is
+  // then exactly band i+1's left edge, so n bands tile 0%-100% with no gap
+  // and no overlap (n=3: 0-33.3, 33.3-66.6, 66.6-100).
+  function bandClip(i, n) {
+    if (n < 2) return '';   // one session -> no clip at all, the plain pet
+    return 'inset(0 ' + (100 - (i + 1) * 100 / n) + '% 0 ' + (i * 100 / n) + '%)';
+  }
+
+  function setClip(el, value) {
+    if (el.style.clipPath === value) return;
+    el.style.clipPath = value;
+    // Back to one session -> leave the markup as it was found, not with an
+    // empty style="" hanging off the pet.
+    if (!el.style.length) el.removeAttribute('style');
+  }
+
+  // Whole-pet state that isn't per session: every band should sweat when the
+  // usage limit is close, not just the first one.
+  const BAND_MIRROR_CLASSES = ['near-limit', 'critical-limit', 'resetting-soon'];
+
+  function syncBands(n) {
+    // Clones are only created/destroyed when the session COUNT changes.
+    // Rebuilding them every 1.2s poll would restart every band's animation
+    // mid-beat - the same stutter lastChipKey avoids for the chips.
+    while (petBands.length > n - 1) petWrap.removeChild(petBands.pop());
+    while (petBands.length < n - 1) {
+      const clone = pet.cloneNode(true);
+      clone.removeAttribute('id');   // inner ids stay: the CSS keys off them
+      // A clone taken mid-click would keep that click's inline styles (happy
+      // eyes, floating heart) frozen forever. Nothing in the markup uses
+      // style= , so dropping all of them leaves only the intended state.
+      clone.querySelectorAll('[style]').forEach((el) => el.removeAttribute('style'));
+      clone.setAttribute('class', 'pet petBand');
+      petBands.push(clone);
+      petWrap.appendChild(clone);
+    }
+  }
+
+  function paintBand(band, cls, extraClasses) {
+    const want = ['pet', 'petBand'].concat(extraClasses, cls || []).join(' ');
+    if (band.getAttribute('class') === want) return;   // same guard as the body's
+    band.setAttribute('class', want);
+    const [l, r] = ACT_EYES[cls] || EYES_IDLE;
+    band.querySelector('.eyeL').textContent = l;
+    band.querySelector('.eyeR').textContent = r;
+  }
+
+  function renderBands(sessions) {
+    const split = sessionMode === 'split' && sessions.length > 1;
+    const order = split ? bandOrder(sessions) : [];
+    const n = split ? order.length : 1;
+    syncBands(n);
+    setClip(pet, bandClip(0, n));   // '' when n === 1: the untouched single pet
+    const mirror = BAND_MIRROR_CLASSES.filter((c) => pet.classList.contains(c));
+    petBands.forEach((band, i) => {
+      setClip(band, bandClip(i + 1, n));
+      paintBand(band, activityClass(order[i + 1]), mirror);
+    });
+  }
+
   function pollActivity() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_activity)) return;
-    window.pywebview.api.get_activity().then((a) => {
+    window.pywebview.api.get_activity().then((primary) => {
+      // primary + others, all the same shape - which one drives the body is a
+      // display choice from here on, not the backend's.
+      const sessions = primary ? [primary].concat(primary.others || []) : [];
+      const a = pickBodySession(sessions, primary);
+      renderBands(sessions);
       updateStuck(a);
       const badge = document.getElementById('activityBadge');
       const cls = activityClass(a);
-      renderSessions(a && a.others);
+      updateAskEscalation(a, cls);
+      renderSessions(sessions.filter((s) => s !== a));
       if (!cls) {
         badge.style.opacity = '0';
         badge.classList.remove('ask');
@@ -893,9 +1187,15 @@ animation: bob 2.2s ease-in-out infinite;
       // to say WHICH project the body is currently animating. Alone, the
       // label is just noise, so it only appears when there is a second
       // session to be confused with.
-      const prefix = (a.others && a.others.length && a.label) ? a.label + ' ' : '';
+      const prefix = (sessions.length > 1 && a.label) ? a.label + ' ' : '';
+      // "git" alone in the badge is fine for the class name but reads as
+      // less than the tool name it replaced - "git commit" is the whole
+      // reason it got its own animation, so surface that subcommand instead.
+      const gitSub = cls === 'act-git' && a.command && a.command.match(/^\s*git\s+(\S+)/i);
       if (cls === 'act-ask') {
         setBadge(badge, 'שאלה בשבילך');
+      } else if (gitSub) {
+        setBadge(badge, prefix + '> git ' + gitSub[1]);
       } else if (a.state === 'tool' && a.tool) {
         setBadge(badge, prefix + '> ' + shortToolName(a.tool));
       } else {
@@ -916,7 +1216,7 @@ animation: bob 2.2s ease-in-out infinite;
   }
 
   // Middle-click the pet -> open settings in its own native window (Python).
-  pet.addEventListener('auxclick', (e) => {
+  petWrap.addEventListener('auxclick', (e) => {
     if (e.button !== 1) return;
     e.preventDefault();
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings_window) {

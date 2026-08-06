@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="he">
+<head>
+<meta charset="UTF-8">
+<title>System Pet</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+  }
+
+  .stage {
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background: transparent;
+  }
+
+  #petWrap {
+    transition: transform 0.2s ease-out;
+    transform-origin: center bottom;
+    transform: scale(var(--pet-scale, 1));
+    position: relative;
+  }
+
+  svg#systemPetSvg {
+    width: 140px;
+    height: auto;
+    overflow: visible;
+    cursor: pointer;
+  }
+
+  #shadow {
+    transform-origin: 150px 236px;
+    animation: shadowIdle 3.4s ease-in-out infinite;
+  }
+  #shadow.jump { animation: shadowHop 0.62s cubic-bezier(.36,0,.15,1) 1; }
+
+  @keyframes shadowIdle {
+    0%, 100% { transform: scaleX(1);    opacity: 0.32; }
+    50%      { transform: scaleX(0.94); opacity: 0.26; }
+  }
+  @keyframes shadowHop {
+    0%   { transform: scaleX(1);    opacity: 0.35; }
+    30%  { transform: scaleX(0.55); opacity: 0.14; }
+    100% { transform: scaleX(1);    opacity: 0.35; }
+  }
+
+  #cone-root {
+    transform-origin: 150px 236px;
+    animation: idleSway 3.4s ease-in-out infinite;
+  }
+  #cone-root.jump { animation: hopOnce 0.62s cubic-bezier(.36,0,.15,1) 1; }
+  /* Sweats faster (shorter idle cycle) once CPU is pegged - see pollHealth(). */
+  #cone-root.hot { animation-duration: 1.6s; }
+
+  @keyframes idleSway {
+    0%, 100% { transform: translateY(0)   rotate(0deg); }
+    50%      { transform: translateY(-4px) rotate(1.2deg); }
+  }
+  @keyframes hopOnce {
+    0%   { transform: translateY(0)     scale(1, 1)      rotate(0deg); }
+    14%  { transform: translateY(2px)   scale(1.07, 0.9)  rotate(0deg); }
+    45%  { transform: translateY(-58px) scale(0.94, 1.08) rotate(-3deg); }
+    72%  { transform: translateY(0)     scale(1.1, 0.88)  rotate(3deg); }
+    86%  { transform: translateY(-5px)  scale(0.98, 1.03) rotate(-1deg); }
+    100% { transform: translateY(0)     scale(1, 1)       rotate(0deg); }
+  }
+
+  #cone-hover {
+    transform-origin: 150px 236px;
+    transition: transform 0.35s cubic-bezier(.34,1.56,.64,1);
+    cursor: pointer;
+  }
+  #cone-hit:hover #cone-hover {
+    transform: scale(1.055) rotate(-1.5deg);
+  }
+
+  #face { transition: transform 0.3s ease; transform-origin: 150px 190px; }
+  #cone-hit:hover #face { transform: scale(1.08); }
+
+  #blink {
+    animation: blink 4.2s ease-in-out infinite;
+    transform-origin: 150px 190px;
+  }
+  @keyframes blink {
+    0%, 92%, 100% { transform: scaleY(1); }
+    95%           { transform: scaleY(0.05); }
+    97%           { transform: scaleY(1); }
+  }
+
+  #glint { animation: sparkle 2.6s ease-in-out infinite; }
+  @keyframes sparkle {
+    0%, 100% { opacity: 0.55; }
+    22%      { opacity: 1; }
+    36%      { opacity: 0.4; }
+  }
+
+  .puff {
+    opacity: 0;
+    transform-origin: center;
+  }
+  .puff.show {
+    animation: puff 0.55s ease-out 1;
+  }
+  @keyframes puff {
+    0%   { opacity: 0;   transform: scale(0.2) translateY(0); }
+    25%  { opacity: 0.55; }
+    100% { opacity: 0;   transform: scale(1.4) translateY(-6px); }
+  }
+
+  /* sweat drop, shown only while CPU is pegged - same idea as claude_pet's
+     near-limit sweat, just fed by CPU% instead of usage% */
+  #sweat { opacity: 0; transition: opacity .25s; }
+  #sweat.shown { opacity: 1; animation: sweatDrip 1.1s ease-in infinite; }
+  @keyframes sweatDrip {
+    0%   { transform: translateY(0);   opacity: 0.9; }
+    100% { transform: translateY(10px); opacity: 0; }
+  }
+
+  /* Corner gauges: fixed size, siblings of petWrap so they never ride the
+     pet-size slider or bob animation - same convention as claude_pet.html's
+     usage gauges (see the .gauge comment there for the full reasoning). */
+  .gauge {
+    position: absolute;
+    top: 2px;
+    opacity: 0;
+    transition: opacity .25s;
+  }
+  #gaugeCpu { left: 8px; }
+  #gaugeRam { right: 8px; }
+  .gaugeText {
+    font-family: 'Courier New', monospace;
+    fill: #FFFFFF;
+    paint-order: stroke;
+    stroke: #12100F;
+    stroke-width: 3px;
+    stroke-linejoin: round;
+  }
+  #battery {
+    position: absolute;
+    bottom: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity .25s;
+    background: #12100FD9;
+    border-radius: 9px;
+    padding: 2px 8px;
+    font: bold 11px 'Courier New', monospace;
+    color: #FFFFFF;
+    white-space: nowrap;
+  }
+  #battery.shown { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+<div id="petWrap">
+<svg id="systemPetSvg" viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- body: slate/graphite - deliberately NOT any app's brand color, since
+         this pet isn't fronting a specific app -->
+    <linearGradient id="tileGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#8FA6B8"/>
+      <stop offset="100%" stop-color="#33495A"/>
+    </linearGradient>
+
+    <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"  stop-color="#000000" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="cheekGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF6B5C" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#FF6B5C" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="puffGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FFE3BE" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#FFE3BE" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <ellipse id="shadow" cx="150" cy="236" rx="66" ry="12" fill="url(#shadowGrad)"/>
+
+  <circle class="puff" id="puffL" cx="112" cy="224" r="14" fill="url(#puffGrad)"/>
+  <circle class="puff" id="puffR" cx="188" cy="224" r="14" fill="url(#puffGrad)"/>
+
+  <g id="cone-root">
+   <g id="cone-hit">
+    <rect x="30" y="0" width="240" height="400" fill="transparent"/>
+    <g id="cone-hover">
+
+      <rect x="128" y="200" width="20" height="42" rx="9" fill="url(#tileGrad)" stroke="#152029" stroke-width="2"/>
+      <rect x="152" y="200" width="20" height="42" rx="9" fill="url(#tileGrad)" stroke="#152029" stroke-width="2"/>
+
+      <!-- ears: small antenna-like nubs, hinting "sensor" rather than a
+           specific app's ears -->
+      <rect x="80" y="108" width="20" height="30" rx="9" fill="url(#tileGrad)" stroke="#152029" stroke-width="4"/>
+      <rect x="200" y="108" width="20" height="30" rx="9" fill="url(#tileGrad)" stroke="#152029" stroke-width="4"/>
+
+      <rect id="petBody" x="95" y="118" width="110" height="110" rx="30" fill="url(#tileGrad)" stroke="#152029" stroke-width="4"/>
+
+      <g id="face">
+        <ellipse cx="132" cy="190" rx="7" ry="4.5" fill="url(#cheekGrad)"/>
+        <ellipse cx="168" cy="190" rx="7" ry="4.5" fill="url(#cheekGrad)"/>
+
+        <g id="blink">
+          <rect x="126" y="167" width="16" height="10" rx="3" fill="#E7F3FA"/>
+          <rect x="158" y="167" width="16" height="10" rx="3" fill="#E7F3FA"/>
+          <circle id="glint" cx="132" cy="170" r="1.8" fill="#152029"/>
+          <circle cx="164" cy="170" r="1.6" fill="#152029" opacity="0.9"/>
+        </g>
+
+        <path d="M138 202 Q150 208 162 202" stroke="#E7F3FA" stroke-width="4" fill="none" stroke-linecap="round"/>
+      </g>
+
+      <text id="sweat" x="196" y="150" font-size="18">&#128167;</text>
+    </g>
+   </g>
+  </g>
+</svg>
+</div>
+
+<!-- CPU / RAM gauges - same ring+percentage construction as claude_pet.html's
+     usage gauges, just fed by psutil instead of the usage.json bridge. Ring
+     r=19/stroke 6, tri-color threshold from gaugeColor() below. -->
+<svg id="gaugeCpu" class="gauge" width="66" height="70" viewBox="0 0 66 70">
+  <rect x="18" y="0" width="30" height="17" rx="8.5" fill="#12100FD9"/>
+  <text x="33" y="13" class="gaugeText" font-size="11" font-weight="bold" text-anchor="middle">CPU</text>
+  <circle cx="33" cy="46" r="23" fill="#12100FD9"/>
+  <circle cx="33" cy="46" r="19" fill="none" stroke="#FFFFFF33" stroke-width="6"/>
+  <circle id="gaugeCpuArc" cx="33" cy="46" r="19" fill="none" stroke="#7CD992" stroke-width="6"
+          stroke-linecap="round" transform="rotate(-90 33 46)" stroke-dasharray="0 119.4"/>
+  <text id="gaugeCpuValue" x="33" y="52" class="gaugeText" font-size="17" font-weight="bold" text-anchor="middle">0%</text>
+</svg>
+<svg id="gaugeRam" class="gauge" width="66" height="70" viewBox="0 0 66 70">
+  <rect x="18" y="0" width="30" height="17" rx="8.5" fill="#12100FD9"/>
+  <text x="33" y="13" class="gaugeText" font-size="11" font-weight="bold" text-anchor="middle">RAM</text>
+  <circle cx="33" cy="46" r="23" fill="#12100FD9"/>
+  <circle cx="33" cy="46" r="19" fill="none" stroke="#FFFFFF33" stroke-width="6"/>
+  <circle id="gaugeRamArc" cx="33" cy="46" r="19" fill="none" stroke="#7CD992" stroke-width="6"
+          stroke-linecap="round" transform="rotate(-90 33 46)" stroke-dasharray="0 119.4"/>
+  <text id="gaugeRamValue" x="33" y="52" class="gaugeText" font-size="17" font-weight="bold" text-anchor="middle">0%</text>
+</svg>
+<div id="battery"></div>
+</div>
+
+<script>
+  const pet      = document.getElementById('systemPetSvg');
+  const petWrap  = document.getElementById('petWrap');
+  const coneRoot = document.getElementById('cone-root');
+  const shadow   = document.getElementById('shadow');
+  const puffL    = document.getElementById('puffL');
+  const puffR    = document.getElementById('puffR');
+  const sweat    = document.getElementById('sweat');
+  const battery  = document.getElementById('battery');
+
+  function applyPetScale(pct) {
+    petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
+  }
+
+  window.addEventListener('pywebviewready', () => {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.get_pet_config) {
+      window.pywebview.api.get_pet_config().then((cfg) => {
+        if (cfg && cfg.size) applyPetScale(cfg.size);
+      });
+    }
+    pollHealth();
+    setInterval(pollHealth, 2000); // psutil's own sampling is coarse; no point polling faster
+  });
+
+  const GAUGE_CIRC = 2 * Math.PI * 19;
+  const HOT_CPU_PCT = 90; // pegged enough to sweat + speed up the idle bob
+
+  function gaugeColor(pct) {
+    if (pct >= 90) return '#E05C3A';
+    if (pct >= 70) return '#F0B94A';
+    return '#7CD992';
+  }
+
+  function setGauge(id, pct) {
+    const g = document.getElementById(id);
+    if (pct == null) { g.style.opacity = '0'; return; }
+    const clamped = Math.max(0, Math.min(100, pct));
+    const arc = document.getElementById(id + 'Arc');
+    arc.setAttribute('stroke-dasharray', `${(clamped / 100 * GAUGE_CIRC).toFixed(2)} ${GAUGE_CIRC}`);
+    arc.setAttribute('stroke', gaugeColor(clamped));
+    document.getElementById(id + 'Value').textContent = Math.round(clamped) + '%';
+    g.style.opacity = '1';
+  }
+
+  function pollHealth() {
+    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_system_health)) return;
+    window.pywebview.api.get_system_health().then((h) => {
+      if (!h) {
+        setGauge('gaugeCpu', null);
+        setGauge('gaugeRam', null);
+        battery.classList.remove('shown');
+        sweat.classList.remove('shown');
+        coneRoot.classList.remove('hot');
+        return;
+      }
+      setGauge('gaugeCpu', h.cpu_pct);
+      setGauge('gaugeRam', h.ram_pct);
+      const hot = h.cpu_pct != null && h.cpu_pct >= HOT_CPU_PCT;
+      sweat.classList.toggle('shown', hot);
+      coneRoot.classList.toggle('hot', hot);
+      if (h.battery_pct == null) {
+        battery.classList.remove('shown');
+      } else {
+        battery.textContent = Math.round(h.battery_pct) + '%' + (h.on_battery ? ' \u{1F50B}' : ' \u{26A1}');
+        battery.classList.add('shown');
+      }
+    }).catch(() => {});
+  }
+
+  function triggerJump() {
+    coneRoot.classList.remove('jump');
+    shadow.classList.remove('jump');
+    puffL.classList.remove('show');
+    puffR.classList.remove('show');
+    void coneRoot.offsetWidth;
+
+    coneRoot.classList.add('jump');
+    shadow.classList.add('jump');
+
+    setTimeout(() => {
+      puffL.classList.add('show');
+      puffR.classList.add('show');
+    }, 430);
+  }
+
+  coneRoot.addEventListener('animationend', (e) => {
+    if (e.animationName === 'hopOnce') {
+      coneRoot.classList.remove('jump');
+      shadow.classList.remove('jump');
+    }
+  });
+
+  function handlePetClick() {
+    triggerJump();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_app) {
+      window.pywebview.api.open_app();
+    }
+  }
+
+  let dragStartX, dragStartY, isDragging = false, movedDistance = 0;
+  const DRAG_THRESHOLD = 6;
+
+  pet.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) {
+      if (e.button === 1) e.preventDefault();
+      return;
+    }
+    dragStartX = e.screenX;
+    dragStartY = e.screenY;
+    movedDistance = 0;
+    isDragging = false;
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
+      window.pywebview.api.start_drag();
+    }
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (dragStartX === undefined) return;
+    const dx = e.screenX - dragStartX;
+    const dy = e.screenY - dragStartY;
+    movedDistance += Math.abs(dx) + Math.abs(dy);
+    if (movedDistance > DRAG_THRESHOLD) {
+      isDragging = true;
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_move) {
+        window.pywebview.api.drag_move(dx, dy);
+      }
+      dragStartX = e.screenX;
+      dragStartY = e.screenY;
+    }
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragStartX === undefined) return;
+    if (isDragging) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
+        window.pywebview.api.drop();
+      }
+    } else {
+      handlePetClick();
+    }
+    dragStartX = undefined;
+    isDragging = false;
+  });
+
+  pet.addEventListener('auxclick', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings_window) {
+      window.pywebview.api.open_settings_window();
+    }
+  });
+</script>
+</body>
+</html>

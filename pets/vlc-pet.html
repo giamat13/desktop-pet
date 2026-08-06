@@ -131,13 +131,18 @@
   /* While VLC is actually playing, the cone itself grooves to it instead of
      just idling underneath a progress bar - the bar alone left the character
      looking untouched by what it was supposedly reporting on. Paused/no-media
-     falls back to idleSway, same as before. */
+     falls back to idleSway, same as before.
+     --groove-scale is set from JS each poll off VLC's own volume (see
+     pollMedia below) - one continuous animation gets bigger/faster at higher
+     volume rather than swapping between discrete named animations. Clamped
+     to >= 0.5 on the JS side so the duration calc below never divides by
+     (near-)zero. */
   #cone-root.playing {
-    animation: vlcGroove 0.58s ease-in-out infinite;
+    animation: vlcGroove calc(0.58s / var(--groove-scale, 1)) ease-in-out infinite;
   }
   @keyframes vlcGroove {
-    0%, 100% { transform: translateY(0)    rotate(-4deg); }
-    50%      { transform: translateY(-10px) rotate(4deg); }
+    0%, 100% { transform: translateY(0) rotate(calc(-4deg * var(--groove-scale, 1))); }
+    50%      { transform: translateY(calc(-10px * var(--groove-scale, 1))) rotate(calc(4deg * var(--groove-scale, 1))); }
   }
   /* Last ~15s of a playing track: a quicker, more anxious wobble instead of
      the steady groove, so "about to end" reads on the cone itself rather
@@ -389,6 +394,17 @@
       if (m.playing !== coneRoot.classList.contains('playing')) {
         coneRoot.classList.toggle('playing', m.playing);
       }
+
+      // Louder VLC volume -> a bigger, faster groove. m.volume is 0-1 (or
+      // absent, e.g. a malformed <volume> element) - missing/unknown volume
+      // keeps the pre-existing intensity rather than treating it as silence.
+      // Floor of 0.5 keeps this off both the CSS calc's denominator (a scale
+      // of 0 there would divide the animation duration by zero) and away
+      // from a groove so tiny it reads as broken rather than "quiet".
+      const grooveScale = (typeof m.volume === 'number')
+        ? Math.max(0.5, Math.min(1.6, 0.5 + m.volume * 1.1))
+        : 1;
+      coneRoot.style.setProperty('--groove-scale', grooveScale.toFixed(2));
 
       const nearEnd = m.playing && (m.duration - m.position) <= NEAR_END_SECS && (m.duration - m.position) > 0;
       if (nearEnd !== coneRoot.classList.contains('near-end')) {

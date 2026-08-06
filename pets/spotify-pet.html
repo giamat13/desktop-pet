@@ -106,13 +106,18 @@
     50%      { transform: translateY(-6px); }
   }
   /* While something is actually playing the pet dances instead of idling -
-     the one glance-level cue that the bar is live and not just stale. */
+     the one glance-level cue that the bar is live and not just stale.
+     --groove-scale is set from JS each poll off Spotify's own session volume
+     (see pollMedia below), same mechanism as vlc-pet.html's #cone-root.playing
+     - one continuous animation gets bigger/faster at higher volume rather
+     than swapping between discrete named animations. Clamped >= 0.5 on the
+     JS side so the duration calc below never divides by (near-)zero. */
   .pet.dancing {
-    animation: dance 0.62s ease-in-out infinite;
+    animation: dance calc(0.62s / var(--groove-scale, 1)) ease-in-out infinite;
   }
   @keyframes dance {
-    0%, 100% { transform: translateY(0) rotate(-4deg); }
-    50%      { transform: translateY(-9px) rotate(4deg); }
+    0%, 100% { transform: translateY(0) rotate(calc(-4deg * var(--groove-scale, 1))); }
+    50%      { transform: translateY(calc(-9px * var(--groove-scale, 1))) rotate(calc(4deg * var(--groove-scale, 1))); }
   }
   /* An ad break reports "playing" just like a real track, but dancing to an
      ad reads as celebrating it - a slow, sinking slouch instead makes clear
@@ -381,6 +386,17 @@
         pet.classList.toggle('dancing', shouldDance);
       }
       pet.classList.toggle('bored', ad);
+
+      // Louder Spotify session volume -> a bigger, faster dance. m.volume is
+      // 0-1, or absent/null when the Core Audio Session lookup failed (pycaw
+      // missing, no matching session, etc.) - missing volume keeps the
+      // pre-existing default intensity rather than reading as silence.
+      // Floor of 0.5 keeps this off the CSS calc's denominator (a scale of 0
+      // there would divide the animation duration by zero).
+      const grooveScale = (typeof m.volume === 'number')
+        ? Math.max(0.5, Math.min(1.6, 0.5 + m.volume * 1.1))
+        : 1;
+      petWrap.style.setProperty('--groove-scale', grooveScale.toFixed(2));
 
       // A new track (but not the very first sighting, and not into an ad)
       // gets the same little note burst as a manual click.

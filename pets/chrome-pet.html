@@ -124,10 +124,30 @@
 <div id="petWrap">
 <svg id="chromePetSvg" viewBox="0 0 300 420" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <!-- body: Chrome blue, bright top-left fading to a deep indigo bottom-right -->
+    <!-- centre disc + legs: Chrome blue (#4285F4 family), bright top-left fading to
+         a deep indigo bottom-right -->
     <linearGradient id="tileGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%"  stop-color="#6BB6FF"/>
+      <stop offset="0%"  stop-color="#7BAAF7"/>
       <stop offset="100%" stop-color="#1A56DB"/>
+    </linearGradient>
+
+    <!-- the three outer arcs. Same light-from-top-left diagonal as tileGrad, so all
+         four body gradients share one light direction. Each pair straddles its Google
+         brand hue (mean lands on ~#EA4335 / ~#FBBC05 / ~#34A853) instead of muting it,
+         because at this render size the hue has to survive a 65px glance. -->
+    <linearGradient id="redArcGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#F2665A"/>
+      <stop offset="100%" stop-color="#C5221F"/>
+    </linearGradient>
+
+    <linearGradient id="yellowArcGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#FFCE45"/>
+      <stop offset="100%" stop-color="#F09300"/>
+    </linearGradient>
+
+    <linearGradient id="greenArcGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#4CBF6B"/>
+      <stop offset="100%" stop-color="#167C3C"/>
     </linearGradient>
 
     <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
@@ -166,12 +186,41 @@
       <rect x="116" y="228" width="22" height="44" rx="10" fill="url(#tileGrad)" stroke="#0B2E73" stroke-width="2"/>
       <rect x="156" y="228" width="22" height="44" rx="10" fill="url(#tileGrad)" stroke="#0B2E73" stroke-width="2"/>
 
-      <!-- the pet's whole body IS the official Google Chrome mark, scaled up from
-           its native 24x24 viewBox (Simple Icons "googlechrome" glyph): a circular
-           pinwheel with a solid inner disc -->
-      <path transform="translate(60,55) scale(7.5)"
-            d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257c.206.01.413.016.621.016 6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728 4.364 4.364 0 0 1 0 8.728Z"
-            fill="url(#tileGrad)" stroke="#0B2E73" stroke-width="0.53" stroke-linejoin="round"/>
+      <!-- the pet's whole body IS the official Google Chrome mark, scaled up from its
+           native 24x24 viewBox (Simple Icons "googlechrome" glyph). Same translate/scale
+           as the old single-path version, so the silhouette is unchanged: outer radius
+           12*7.5 = 90px about centre (150,145), inner disc radius 4.364*7.5 = 32.7px.
+           What changed is that the mark is now split into its real parts - three colour
+           arcs pinwheeled around a blue centre disc - instead of one flat blue fill.
+
+           Geometry (angles measured clockwise from 12 o'clock):
+             each arc spans 114.3 deg of the outer circle, leaving three 5.7 deg white
+             seams; red is centred on 6 deg (top), yellow on 126 deg (lower right),
+             green on 246 deg (lower left). Every arc is the same four-sided shape:
+             a tangent edge leaving the inner circle (r 5.455), the outer arc (r 12),
+             a chord edge tangent to the blue disc (r 4.364), then back along the inner
+             circle. Yellow and green are red rotated 120 and 240 deg, so all twelve
+             corner points land exactly on r=12 or r=5.455 - the seams cannot gap. -->
+      <g transform="translate(60,55) scale(7.5)">
+        <!-- white body disc: the seams between the arcs and the ring around the centre
+             are this circle showing through, so they read white over any wallpaper
+             rather than punching holes to the desktop the way the old path did -->
+        <circle cx="12" cy="12" r="12" fill="#FFFFFF"/>
+
+        <path fill="url(#redArcGrad)"
+              d="M12 6.545 L22.6885 6.545 A12 12 0 0 0 2.6315 4.5013 L6.5842 11.3475 A5.455 5.455 0 0 1 12 6.545Z"/>
+        <path fill="url(#yellowArcGrad)"
+              d="M16.7242 14.7275 L11.3799 23.984 A12 12 0 0 0 23.1783 7.636 L15.273 7.636 A5.455 5.455 0 0 1 16.7242 14.7275Z"/>
+        <path fill="url(#greenArcGrad)"
+              d="M7.2758 14.7275 L1.9316 5.471 A12 12 0 0 0 10.1902 23.8627 L14.1428 17.0165 A5.455 5.455 0 0 1 7.2758 14.7275Z"/>
+
+        <!-- blue centre disc. The 1.09-wide white ring between it and the arcs' inner
+             edge is what stops the mark reading as a generic pinwheel -->
+        <circle cx="12" cy="12" r="4.364" fill="url(#tileGrad)" stroke="#0B2E73" stroke-width="0.36"/>
+
+        <!-- house dark rim, same colour and width the single-path version stroked with -->
+        <circle cx="12" cy="12" r="12" fill="none" stroke="#0B2E73" stroke-width="0.53"/>
+      </g>
 
       <!-- face sits in the solid inner disc (native circle radius 4.364 centered
            at 12,12 -> final center 150,145, radius ~33), clear of the three

@@ -53,10 +53,26 @@ $tmp = "$path.tmp"
 $label = $null
 if ($data.cwd) { $label = Split-Path -Leaf $data.cwd }
 
+# Bash-family tools carry the actual command in tool_input.command (that's
+# the PreToolUse hook payload shape for the Bash tool) - grabbing it lets the
+# pet tell "git commit" apart from "npm install" instead of lumping every
+# shell call into one generic animation. $data.tool_input is $null for every
+# other tool (or on an older/changed hook payload), and PowerShell property
+# access on $null just yields $null rather than throwing, so this degrades
+# the same way every other field here already does. Truncated because this
+# rides in a small polled JSON file and the command text is untrusted
+# external input - never let it grow the file unbounded.
+$command = $null
+if ($data.tool_name -match '^(Bash|Shell|KillShell|BashOutput)$' -and $data.tool_input.command) {
+    $command = [string]$data.tool_input.command
+    if ($command.Length -gt 120) { $command = $command.Substring(0, 120) }
+}
+
 $obj = [ordered]@{
     state      = $state
     tool       = $data.tool_name
     label      = $label
+    command    = $command
     updated_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 }
 

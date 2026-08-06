@@ -7,3 +7,12 @@ pywinpty
 winrt-Windows.Media.Control
 winrt-Windows.Foundation
 winrt-Windows.Foundation.Collections
+# Spotify's per-app volume isn't in SMTC either - needs the separate Core
+# Audio Session API (same data behind the Volume Mixer flyout). pycaw wraps
+# that COM API; comtypes is its underlying dependency, listed explicitly
+# since we rely on it directly nowhere else pulling it in for us.
+pycaw
+comtypes
+# System-health pet: cross-platform CPU/RAM/battery reads without hand-rolled
+# WMI/ctypes for each metric.
+psutil

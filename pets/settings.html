@@ -20,6 +20,9 @@
   }
   h1 { margin: 0; font-size: 16px; color: #B94A24; }
   .row { display: flex; flex-direction: column; gap: 6px; }
+  /* An author `display: flex` outranks the UA stylesheet's [hidden] rule, so
+     without this a hidden row still takes up its full height. */
+  .row[hidden] { display: none; }
   .label { font-weight: bold; font-size: 13px; }
   .modes { display: flex; gap: 8px; }
   .modes button {
@@ -57,9 +60,19 @@
 
   <div class="row">
     <span class="label">מיקום</span>
-    <div class="modes">
+    <div class="modes" id="positionModes">
       <button id="modeDesktop" data-mode="desktop">על שולחן העבודה</button>
       <button id="modeTaskbar" data-mode="taskbar">על שורת המשימות</button>
+    </div>
+  </div>
+
+  <!-- Claude only: no other pet has "several live sessions" to divide up.
+       Hidden until get_pet_config() says which pet this window belongs to. -->
+  <div class="row" id="sessionRow" hidden>
+    <span class="label">כמה סשנים במקביל</span>
+    <div class="modes" id="sessionModes">
+      <button data-session-mode="split">פיצול הגוף</button>
+      <button data-session-mode="lock">נעילה על סשן</button>
     </div>
   </div>
 
@@ -82,8 +95,13 @@
   const marginValue  = document.getElementById('marginValue');
   const sizeSlider   = document.getElementById('size');
   const sizeValue    = document.getElementById('sizeValue');
-  const modeButtons  = [...document.querySelectorAll('.modes button')];
-  const saveBtn      = document.getElementById('save');
+  // Scoped to #positionModes, not '.modes button': there is a second button
+  // group now, and a stray match would let a session-mode click clear the
+  // position highlight (and vice versa).
+  const modeButtons    = [...document.querySelectorAll('#positionModes button')];
+  const sessionRow     = document.getElementById('sessionRow');
+  const sessionButtons = [...document.querySelectorAll('#sessionModes button')];
+  const saveBtn        = document.getElementById('save');
 
   function api() {
     return (window.pywebview && window.pywebview.api) || null;
@@ -102,6 +120,11 @@
     sizeSlider.value = size;
     sizeValue.textContent = size + '%';
     setActiveMode(cfg.position || 'taskbar');
+    // "split" is the default everywhere, including a config that has never
+    // been written - so an unset/unknown value must land on split, not lock.
+    const sessionMode = cfg.session_mode === 'lock' ? 'lock' : 'split';
+    sessionButtons.forEach(b => b.classList.toggle('active', b.dataset.sessionMode === sessionMode));
+    sessionRow.hidden = cfg.pet !== 'claude';
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.
@@ -137,6 +160,11 @@
         }
       });
     }
+  }));
+
+  sessionButtons.forEach(b => b.addEventListener('click', () => {
+    sessionButtons.forEach(o => o.classList.toggle('active', o === b));
+    if (api() && api().set_session_mode) api().set_session_mode(b.dataset.sessionMode);
   }));
 
   saveBtn.addEventListener('click', () => {
