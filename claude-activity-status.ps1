@@ -72,6 +72,10 @@ $obj = [ordered]@{
     state      = $state
     tool       = $data.tool_name
     label      = $label
+    # Full cwd, not just $label's basename - the pet needs a real path to
+    # launch `claude --resume` back into this session's project directory
+    # once a usage-limit auto-resume fires.
+    cwd        = $data.cwd
     command    = $command
     updated_at = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 }

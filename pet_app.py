@@ -955,6 +955,193 @@ def read_activity():
     return primary
 
 
+# ---- auto-resume when the usage limit resets --------------------------
+# There is no way to inject a message into a Claude Code session that is
+# already running (no API/socket for that exists) - so instead of "telling"
+# sessions to wait, the pet itself waits, then launches `claude --resume
+# <session_id>` for each session once the 5h window resets.
+
+# How often the wait thread wakes up to check for cancellation / re-check
+# the remaining time. Coarse enough not to spin a thread for hours, fine
+# enough that disarming takes effect quickly.
+RESUME_CHECK_INTERVAL = 20
+
+# Set (to the Event guarding the currently-armed wait) by arm_resume(), and
+# to None once nothing is armed. A module global, not per-Api-instance state,
+# because it must survive across arm_resume()/disarm_resume() calls and be
+# visible to the worker thread.
+_resume_cancel = None
+
+
+def _parse_resets_at(resets_at):
+    """
+    Epoch seconds, from either shape read_usage() can return: a number (real
+    claude-usage-statusline.ps1 output) or an ISO 8601 string (test
+    fixtures) - same dual format the gauge countdown in claude_pet.html
+    already tolerates. None if resets_at is missing/unparseable.
+    """
+    if resets_at is None:
+        return None
+    if isinstance(resets_at, (int, float)):
+        return float(resets_at)
+    try:
+        import datetime
+        return datetime.datetime.fromisoformat(str(resets_at).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def find_claude_cli():
+    """
+    Locate the `claude` CLI - PATH first, then the usual per-user install
+    spots, same search refresh_usage.py already does to find the same
+    executable (kept as its own copy here rather than a shared import, since
+    refresh_usage.py is a standalone scheduled-task script).
+    """
+    import shutil
+    found = shutil.which("claude")
+    if found:
+        return found
+    candidates = [
+        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Links\claude.exe"),
+        os.path.expandvars(r"%APPDATA%\npm\claude.cmd"),
+        os.path.expanduser(r"~\.local\bin\claude.exe"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def read_resume_candidates():
+    """
+    Every session known well enough to resume later: {session_id, cwd,
+    label}, one per still-relevant activity file. Deliberately NOT gated by
+    ACTIVITY_STALE_SECS like read_activity() - a session sitting idle
+    between turns for a few minutes is exactly what auto-resume needs to
+    find hours later when the usage window resets, so the only cutoff here
+    is ACTIVITY_KEEP_SECS (the same horizon after which a session's file is
+    swept as abandoned).
+    """
+    now = time.time()
+    out = {}
+    for path in glob.glob(ACTIVITY_GLOB):
+        try:
+            with open(path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        sid = os.path.basename(path)[len("activity-"):-len(".json")]
+        if sid == "default":
+            continue  # shared bucket for hook payloads with no session_id - not resumable
+        cwd = data.get("cwd")
+        if not cwd or now - data.get("updated_at", 0) > ACTIVITY_KEEP_SECS:
+            continue
+        out[sid] = {"session_id": sid, "cwd": cwd, "label": data.get("label")}
+    return list(out.values())
+
+
+def _launch_resume(session):
+    """Open a new console window running `claude --resume <id>` in the
+    session's original directory, so it picks the conversation back up with
+    full context instead of starting fresh."""
+    claude = find_claude_cli()
+    if not claude:
+        log("resume: claude CLI not found, skipping", session)
+        return
+    try:
+        subprocess.Popen(
+            ["cmd.exe", "/c", "start", "Claude Code - resumed", "cmd.exe", "/k",
+             claude, "--resume", session["session_id"]],
+            cwd=session.get("cwd") or None,
+        )
+    except Exception as exc:
+        log("resume: failed to launch", session, exc)
+
+
+def _resume_worker(pet, resume_at, sessions, cancel_event):
+    global _resume_cancel
+    while not cancel_event.is_set():
+        remaining = resume_at - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(remaining, RESUME_CHECK_INTERVAL))
+    if cancel_event.is_set():
+        return
+    for session in sessions:
+        _launch_resume(session)
+    if _resume_cancel is cancel_event:
+        _resume_cancel = None
+    update_config(pet, resume_armed=False)
+
+
+def arm_resume(pet):
+    """
+    Start waiting for the current 5h usage window to reset, then auto-launch
+    `claude --resume` for every session known right now. Sessions are
+    snapshotted at arm time (not re-read at fire time): what should resume
+    is "the sessions that were near the limit when this was armed", not
+    whatever happens to still have a fresh activity file hours later.
+    """
+    global _resume_cancel
+    usage = read_usage() or {}
+    resume_at = _parse_resets_at((usage.get("five_hour") or {}).get("resets_at"))
+    if not resume_at:
+        return {"ok": False, "error": "no_reset_time"}
+    sessions = read_resume_candidates()
+    if _resume_cancel is not None:
+        _resume_cancel.set()  # superseded by this arm - stop any previous wait
+    cancel_event = threading.Event()
+    _resume_cancel = cancel_event
+    update_config(pet, resume_armed=True, resume_at=resume_at, resume_sessions=sessions)
+    threading.Thread(target=_resume_worker, args=(pet, resume_at, sessions, cancel_event),
+                      daemon=True).start()
+    return {"ok": True, "resume_at": resume_at, "count": len(sessions)}
+
+
+def disarm_resume(pet):
+    global _resume_cancel
+    if _resume_cancel is not None:
+        _resume_cancel.set()
+    _resume_cancel = None
+    update_config(pet, resume_armed=False)
+    return {"ok": True}
+
+
+def get_resume_state(pet):
+    """Polled from JS so the button reflects armed state - including right
+    after app restart, before _reattach_armed_resume() has necessarily run."""
+    cfg = load_config(pet)
+    if not cfg.get("resume_armed"):
+        return {"armed": False}
+    return {"armed": True, "resume_at": cfg.get("resume_at"),
+            "count": len(cfg.get("resume_sessions") or [])}
+
+
+def _reattach_armed_resume(pet):
+    """
+    Called once at startup: if a previous run of the app armed a resume and
+    then exited (or crashed) before it fired, pick the wait back up instead
+    of losing it. If resume_at already passed while the app was closed, the
+    worker's own remaining<=0 check fires it immediately - late beats never.
+    """
+    if pet != "claude":
+        return
+    cfg = load_config(pet)
+    if not cfg.get("resume_armed"):
+        return
+    resume_at = cfg.get("resume_at")
+    if not resume_at:
+        update_config(pet, resume_armed=False)
+        return
+    global _resume_cancel
+    cancel_event = threading.Event()
+    _resume_cancel = cancel_event
+    threading.Thread(target=_resume_worker,
+                      args=(pet, resume_at, cfg.get("resume_sessions") or [], cancel_event),
+                      daemon=True).start()
+
+
 # VS Code prefixes its window title with this bullet for the active file
 # whenever it has unsaved changes, e.g. "● app.py - myproject - Visual
 # Studio Code". No bullet -> nothing dirty.
@@ -1342,6 +1529,27 @@ class Api:
         """Polled from JS on a short timer to drive the activity badge."""
         return read_activity()
 
+    def arm_resume(self):
+        """
+        Near-limit button: wait for the 5h window to reset, then auto-launch
+        `claude --resume` for every session known right now. Claude pet only.
+        """
+        if self._pet != "claude":
+            return {"ok": False, "error": "wrong_pet"}
+        return arm_resume(self._pet)
+
+    def disarm_resume(self):
+        if self._pet != "claude":
+            return {"ok": False, "error": "wrong_pet"}
+        return disarm_resume(self._pet)
+
+    def get_resume_state(self):
+        """Polled from JS to drive the near-limit resume button. None for
+        every other pet, same gating as get_media()."""
+        if self._pet != "claude":
+            return None
+        return get_resume_state(self._pet)
+
     def get_media(self):
         """
         Polled from JS to drive the VLC / Spotify progress bars. None for
@@ -1540,6 +1748,7 @@ def main():
 
     for i, pet in enumerate(pets):
         cfg = load_config(pet)
+        _reattach_armed_resume(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
         open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge,
                        "chrome": launch_chrome, "spotify": launch_spotify, "discord": launch_discord,
