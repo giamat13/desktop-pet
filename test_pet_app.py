@@ -88,6 +88,22 @@ def _wait_for(cond, timeout=3.0):
     raise AssertionError("condition not met within timeout")
 
 
+def _test_task_state():
+    """
+    _task_state() decides whether the settings toggle shows on or off.
+
+    "Running" is the trap: a task caught mid-run reports it instead of
+    "Ready", and reading only "Ready" as on would flip the switch back under
+    the user every time the refresh happened to be executing.
+    """
+    assert pet_app._task_state("Ready" + chr(10)) is True
+    assert pet_app._task_state("Running") is True, "a mid-run task is still enabled"
+    assert pet_app._task_state("Disabled" + chr(13) + chr(10)) is False
+    assert pet_app._task_state("") is None, "no task registered must read as None"
+    assert pet_app._task_state(None) is None
+    print("OK: _task_state self-check passed")
+
+
 def _test_read_usage():
     """read_usage() must hide stale data and surface fresh data untouched."""
     tmp_dir = tempfile.mkdtemp(prefix="claude_pet_usage_selfcheck_")
@@ -117,6 +133,13 @@ def _test_read_usage():
     with open(pet_app.USAGE_PATH, "rb") as f:
         assert f.read(3) == b"\xef\xbb\xbf", "fixture must actually carry a BOM"
     assert pet_app.read_usage() is not None, "usage.json with a UTF-8 BOM must still parse"
+
+    # The refresh task's own session writes this on its way up, before its
+    # first API response fills in rate_limits.
+    blank = dict(fresh, five_hour={"used_percentage": None, "resets_at": None})
+    with open(pet_app.USAGE_PATH, "w", encoding="utf-8") as f:
+        json.dump(blank, f)
+    assert pet_app.read_usage() is None, "fresh usage.json with a null percentage must read as None"
 
     print("OK: read_usage self-check passed")
 
@@ -684,6 +707,7 @@ def _test_read_system_health():
 
 
 def main():
+    _test_task_state()
     _test_read_usage()
     _test_read_activity()
     _test_parse_resets_at()

@@ -36,12 +36,21 @@ CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 LOG_PATH = os.path.join(CONFIG_DIR, "log.txt")
 USAGE_PATH = os.path.join(CONFIG_DIR, "usage.json")
-# usage.json is refreshed by refresh_usage.py on a 5-minute scheduled task
-# (and by any interactive `claude` session's status line). Anything older than
-# this means the refresher has stopped, not that usage is genuinely 0 - the
-# gauges hide rather than show a frozen number. Kept comfortably above the
-# 5-minute refresh interval so one missed run doesn't blink the gauges out.
-USAGE_STALE_SECS = 12 * 60
+# usage.json is written by any interactive `claude` session's status line, and
+# by refresh_usage.py's scheduled task if the user turned it on (see
+# REFRESH_TASK below - it ships off). Anything older than this is dropped
+# rather than shown: a number nobody refreshed for ten minutes is a guess, and
+# a frozen gauge is worse than a hidden one.
+USAGE_STALE_SECS = 10 * 60
+
+# The scheduled task registered by install.ps1. Each run spawns a real
+# `claude` session purely to harvest rate-limit numbers. That used to cost ~12k
+# tokens of Opus every 5 minutes (~57% of a Pro weekly allowance, on gauges);
+# refresh_usage.py now does it with a no-tools Haiku agent for ~1.2k tokens
+# every 10 minutes, ~0.4% of the allowance, which is why it ships on. The
+# toggle below flips the task itself - the task state IS the setting, so there
+# is no second copy of it in config.json to disagree with reality.
+REFRESH_TASK = "DesktopPetUsageRefresh"
 
 ACTIVITY_GLOB = os.path.join(CONFIG_DIR, "activity-*.json")
 # claude-activity-status.ps1 (a Claude Code hook, not a poller) rewrites one
@@ -895,7 +904,60 @@ def read_usage():
         return None
     if time.time() - data.get("updated_at", 0) > USAGE_STALE_SECS:
         return None
+    # The status line runs on every status update, including the ones before a
+    # session's first API response - and `rate_limits` is empty until then, so
+    # it writes a fresh-but-null file. Caught in the wild: the refresh task
+    # blanked the gauges for ~20s of every cycle. Fresh-and-null is no data.
+    if data.get("five_hour", {}).get("used_percentage") is None:
+        return None
     return data
+
+
+def _task_state(out):
+    """
+    Map `Get-ScheduledTask ... State` output to True/False/None.
+
+    Split out from the subprocess call so it can be tested: the State enum
+    prints as a word ("Ready", "Running", "Disabled"), and everything that is
+    not "Disabled" counts as on - a task caught mid-run reports "Running", and
+    treating that as off would flip the settings toggle back under the user.
+    None means the task isn't registered at all (older install, or removed).
+    """
+    state = (out or "").strip().lower()
+    if not state:
+        return None
+    return state != "disabled"
+
+
+def _ps(script, timeout=15):
+    """PowerShell one-liner, no console flash (the app runs under pythonw)."""
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def get_usage_refresh():
+    """True/False if the usage-refresh task exists and is on/off, else None."""
+    try:
+        r = _ps(f"(Get-ScheduledTask -TaskName {REFRESH_TASK} "
+                "-ErrorAction SilentlyContinue).State")
+        return _task_state(r.stdout)
+    except Exception as exc:
+        log("get_usage_refresh failed:", exc)
+        return None
+
+
+def set_usage_refresh(on):
+    """Turn the paid background refresh on or off. Returns the new state."""
+    verb = "Enable" if on else "Disable"
+    try:
+        _ps(f"{verb}-ScheduledTask -TaskName {REFRESH_TASK} "
+            "-ErrorAction SilentlyContinue | Out-Null")
+    except Exception as exc:
+        log("set_usage_refresh failed:", exc)
+    return get_usage_refresh()
 
 
 def read_activity():
@@ -1498,6 +1560,10 @@ def get_pet_config(pet):
         # (default) divides its body into one band per session, "lock" follows
         # a single session and ignores the rest. Claude pet only.
         "session_mode": cfg.get("session_mode", "split"),
+        # Whether the paid background usage refresh is on. None = the task
+        # isn't registered, so settings.html hides the row entirely rather
+        # than offering a switch that flips nothing. Claude pet only.
+        "usage_refresh": get_usage_refresh() if pet == "claude" else None,
     }
 
 
@@ -1599,9 +1665,10 @@ class Api:
                 title="הגדרות",
                 url=SETTINGS_PATH,
                 width=320,
-                # Claude gets one extra row (multi-session mode); the row is
-                # hidden for every other pet, so their window stays short.
-                height=420 if self._pet == "claude" else 340,
+                # Claude gets two extra rows (multi-session mode, background
+                # refresh); both are hidden for every other pet, so their
+                # window stays short.
+                height=520 if self._pet == "claude" else 340,
                 on_top=True,
                 resizable=False,
                 js_api=sapi,
@@ -1735,6 +1802,18 @@ class SettingsApi:
                 self._pet_window.evaluate_js(f"applySessionMode('{mode}')")
         except Exception as exc:
             log("set_session_mode failed:", exc)
+
+    def set_usage_refresh(self, on):
+        """
+        Toggle the background usage refresh. On (the default) the gauges stay
+        current on their own, for ~0.4% of the weekly allowance; off, they are
+        fed only by the status line of interactive `claude` sessions - free,
+        but nothing updates while the user works in the VS Code extension, so
+        the gauges spend most of their time hidden as stale.
+        """
+        if self._pet != "claude":
+            return None
+        return set_usage_refresh(bool(on))
 
     def close_settings(self):
         try:

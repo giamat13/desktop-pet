@@ -76,6 +76,19 @@
     </div>
   </div>
 
+  <!-- Claude only, and only when the scheduled task exists. On by default:
+       a refresh now costs ~1.2k Haiku tokens, ~0.4% of the weekly allowance
+       at 10-minute intervals (it was ~57% before). Off, the gauges only
+       update when you talk to Claude in a real terminal yourself. -->
+  <div class="row" id="refreshRow" hidden>
+    <span class="label">שעוני שימוש</span>
+    <div class="modes" id="refreshModes">
+      <button data-refresh="1">מתעדכנים לבד</button>
+      <button data-refresh="0">כבויים</button>
+    </div>
+    <span class="value">רענון כל 10 דק׳ ≈ 0.4% מהמכסה השבועית (היה 57%). כבוי: מתעדכן רק כששולחים הודעה לקלוד בטרמינל.</span>
+  </div>
+
   <div class="row">
     <span class="label">כוונון עדין</span>
     <input id="margin" type="range" min="-80" max="180" value="46" />
@@ -101,6 +114,8 @@
   const modeButtons    = [...document.querySelectorAll('#positionModes button')];
   const sessionRow     = document.getElementById('sessionRow');
   const sessionButtons = [...document.querySelectorAll('#sessionModes button')];
+  const refreshRow     = document.getElementById('refreshRow');
+  const refreshButtons = [...document.querySelectorAll('#refreshModes button')];
   const saveBtn        = document.getElementById('save');
 
   function api() {
@@ -125,6 +140,9 @@
     const sessionMode = cfg.session_mode === 'lock' ? 'lock' : 'split';
     sessionButtons.forEach(b => b.classList.toggle('active', b.dataset.sessionMode === sessionMode));
     sessionRow.hidden = cfg.pet !== 'claude';
+    // null (task not registered) hides the row - nothing to toggle.
+    refreshRow.hidden = cfg.usage_refresh === null || cfg.usage_refresh === undefined;
+    setRefresh(cfg.usage_refresh ? '1' : '0');
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.
@@ -159,6 +177,20 @@
           marginValue.textContent = margin + 'px';
         }
       });
+    }
+  }));
+
+  function setRefresh(v) {
+    refreshButtons.forEach(b => b.classList.toggle('active', b.dataset.refresh === v));
+  }
+
+  refreshButtons.forEach(b => b.addEventListener('click', () => {
+    setRefresh(b.dataset.refresh);
+    if (api() && api().set_usage_refresh) {
+      // Re-sync from what the task actually reports: enabling can fail
+      // (task removed, policy), and the buttons must not lie about it.
+      api().set_usage_refresh(b.dataset.refresh === '1')
+           .then(on => setRefresh(on ? '1' : '0'));
     }
   }));
 
