@@ -966,6 +966,13 @@ def read_activity():
 # enough that disarming takes effect quickly.
 RESUME_CHECK_INTERVAL = 20
 
+# A session only counts as "still yours to resume" if a hook fired for it in
+# the last 30 minutes - long enough to cover a real thinking pause, short
+# enough that a project you abandoned hours before hitting the limit (or
+# before arming) doesn't get an uninvited `claude --resume` window when the
+# reset finally fires.
+RESUME_CANDIDATE_MAX_AGE_SECS = 30 * 60
+
 # Set (to the Event guarding the currently-armed wait) by arm_resume(), and
 # to None once nothing is armed. A module global, not per-Api-instance state,
 # because it must survive across arm_resume()/disarm_resume() calls and be
@@ -1015,13 +1022,15 @@ def find_claude_cli():
 
 def read_resume_candidates():
     """
-    Every session known well enough to resume later: {session_id, cwd,
-    label}, one per still-relevant activity file. Deliberately NOT gated by
-    ACTIVITY_STALE_SECS like read_activity() - a session sitting idle
-    between turns for a few minutes is exactly what auto-resume needs to
-    find hours later when the usage window resets, so the only cutoff here
-    is ACTIVITY_KEEP_SECS (the same horizon after which a session's file is
-    swept as abandoned).
+    Every session recently active enough to resume later: {session_id, cwd,
+    label}, one per matching activity file. Deliberately NOT gated by the
+    much shorter ACTIVITY_STALE_SECS like read_activity() - a session
+    sitting idle between turns for a few minutes must still be found here.
+    But unlike ACTIVITY_KEEP_SECS (the 6h horizon before a file is swept as
+    abandoned), this uses the much tighter RESUME_CANDIDATE_MAX_AGE_SECS: a
+    session nobody touched in the last 30 minutes shouldn't get an
+    auto-resume window sprung on it hours later just because its old
+    activity file hadn't been swept yet.
     """
     now = time.time()
     out = {}
@@ -1035,7 +1044,7 @@ def read_resume_candidates():
         if sid == "default":
             continue  # shared bucket for hook payloads with no session_id - not resumable
         cwd = data.get("cwd")
-        if not cwd or now - data.get("updated_at", 0) > ACTIVITY_KEEP_SECS:
+        if not cwd or now - data.get("updated_at", 0) > RESUME_CANDIDATE_MAX_AGE_SECS:
             continue
         out[sid] = {"session_id": sid, "cwd": cwd, "label": data.get("label")}
     return list(out.values())

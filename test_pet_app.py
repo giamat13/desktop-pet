@@ -224,17 +224,21 @@ def _test_arm_and_disarm_resume():
     # A session with no real id (older Claude Code builds) is never resumable.
     write_activity("default", {"state": "idle", "cwd": r"C:\other", "label": "other",
                                 "updated_at": time.time()})
-    # A session abandoned long enough ago must not be dragged back in either.
+    # Just inside the 30-minute resume window - still a candidate.
+    write_activity("recent456", {"state": "idle", "cwd": r"C:\recent", "label": "recent",
+                                  "updated_at": time.time() - pet_app.RESUME_CANDIDATE_MAX_AGE_SECS + 30})
+    # Just outside the 30-minute resume window - a project you'd already
+    # moved on from when the limit hit must not get an uninvited resume.
     write_activity("stale999", {"state": "idle", "cwd": r"C:\gone", "label": "gone",
-                                 "updated_at": time.time() - pet_app.ACTIVITY_KEEP_SECS - 1})
+                                 "updated_at": time.time() - pet_app.RESUME_CANDIDATE_MAX_AGE_SECS - 30})
 
     result = pet_app.arm_resume("claude")
-    assert result == {"ok": True, "resume_at": resets_at, "count": 1}, result
+    assert result == {"ok": True, "resume_at": resets_at, "count": 2}, result
     cfg = pet_app.load_config("claude")
     assert cfg["resume_armed"] is True
-    assert cfg["resume_sessions"] == [{"session_id": "abc123", "cwd": r"C:\proj", "label": "proj"}], \
+    assert sorted(s["session_id"] for s in cfg["resume_sessions"]) == ["abc123", "recent456"], \
         cfg["resume_sessions"]
-    assert pet_app.get_resume_state("claude") == {"armed": True, "resume_at": resets_at, "count": 1}
+    assert pet_app.get_resume_state("claude") == {"armed": True, "resume_at": resets_at, "count": 2}
 
     first_cancel = pet_app._resume_cancel
     assert first_cancel is not None and not first_cancel.is_set()
