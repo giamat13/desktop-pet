@@ -106,11 +106,20 @@ def cheap_workspace():
     dot = os.path.join(ws, ".claude")
     os.makedirs(dot, exist_ok=True)
     with open(os.path.join(dot, "settings.json"), "w", encoding="utf-8") as f:
-        json.dump({"statusLine": {
-            "type": "command",
-            "command": ('powershell -NoProfile -ExecutionPolicy Bypass -File '
-                        f'"{STATUSLINE}"'),
-        }}, f)
+        json.dump({
+            "statusLine": {
+                "type": "command",
+                "command": ('powershell -NoProfile -ExecutionPolicy Bypass '
+                            f'-File "{STATUSLINE}"'),
+            },
+            # Otherwise every run registers a Remote Control session, and the
+            # user's session list fills up with one throwaway "gauge" session
+            # per refresh (observed: a bridgeSessionId on each spawn). Project
+            # settings are allowed to turn Remote Control OFF - they are only
+            # forbidden from turning it on - so this is the one place the
+            # scratch workspace can actually override the global default.
+            "remoteControlAtStartup": False,
+        }, f)
     return ws
 
 
