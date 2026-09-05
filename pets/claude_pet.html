@@ -111,36 +111,6 @@
     white-space: nowrap;
     pointer-events: none;
   }
-  /* ---- auto-resume button ---------------------------------------------
-     Shown only near the usage limit (or once armed): waits for the 5h
-     window to reset, then auto-launches `claude --resume` for every session
-     the pet currently knows about. That's the closest real substitute for
-     "send a message to every session" - Claude Code has no channel an
-     outside process can inject a prompt through, so the pet waits instead. */
-  #resumeBtn {
-    position: absolute;
-    bottom: 3px;
-    right: 4px;
-    display: none;
-    align-items: center;
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    font-weight: bold;
-    color: #F5E7DA;
-    background: #12100FE6;
-    border: 1px solid #FFFFFF4D;
-    border-radius: 9px;
-    padding: 2px 8px;
-    cursor: pointer;
-    z-index: 5;
-    user-select: none;
-  }
-  #resumeBtn.show { display: flex; }
-  #resumeBtn.armed {
-    color: #12100F;
-    background: #7CD992;
-    border-color: #7CD992;
-  }
   /* ---- other live sessions -------------------------------------------
      Several Claude Code windows can be working at once, but there is only
      ever ONE pet - a second sprite per session was the obvious idea and the
@@ -639,10 +609,6 @@ animation: bob 2.2s ease-in-out infinite;
 <!-- One chip per OTHER live Claude Code session (see #sessions in the CSS).
      dir="ltr" for the same reason as the badge: tool names are ASCII. -->
 <div id="sessions" dir="ltr"></div>
-<!-- Near-limit auto-resume button: see the #resumeBtn CSS comment for why
-     this waits instead of "sending" anything. Hidden unless near-limit or
-     already armed - see renderResumeBtn(). -->
-<div id="resumeBtn"></div>
 <!-- Pops in only while Claude is waiting on an answer from you. Lives in the
      HTML layer, not the pet's SVG: the sprite's viewBox has no room left
      above the antenna, and out here it can also sit above the sprite in the
@@ -667,62 +633,6 @@ animation: bob 2.2s ease-in-out infinite;
   const eyesHappy = document.getElementById('eyesHappy');
   const petBands = [];   // split-mode clones, one per band AFTER the first
   let animating = false;
-
-  const resumeBtn = document.getElementById('resumeBtn');
-  let resumeState = { armed: false };
-  let lastNearLimit = false;
-
-  function renderResumeBtn() {
-    if (!resumeState.armed && !lastNearLimit) {
-      resumeBtn.classList.remove('show', 'armed');
-      return;
-    }
-    resumeBtn.classList.add('show');
-    if (resumeState.armed) {
-      resumeBtn.classList.add('armed');
-      const reset = formatResetIn(resumeState.resume_at);
-      resumeBtn.textContent = '✓ ימשיך אוטומטית' + (reset ? ' ' + reset : '');
-      resumeBtn.title = 'ימתין לאיפוס המגבלה, ואז ימשיך אוטומטית (claude --resume) בסשנים שזוהו. לחיצה מבטלת.';
-    } else {
-      resumeBtn.classList.remove('armed');
-      resumeBtn.textContent = '⏰ המתן ותמשיך';
-      resumeBtn.title = 'המתן לאיפוס המגבלה, ואז המשך אוטומטית (claude --resume) בסשנים שזוהו כרגע.';
-    }
-  }
-
-  // stopPropagation on both events: the button sits over the pet's own
-  // mousedown-drag / mouseup-click handlers (bound to window/petWrap), and
-  // without this a click here would also start a drag and pop the "hi"
-  // speech bubble.
-  resumeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
-  resumeBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!(window.pywebview && window.pywebview.api)) return;
-    const api = window.pywebview.api;
-    if (resumeState.armed) {
-      if (!api.disarm_resume) return;
-      api.disarm_resume().then(() => {
-        resumeState = { armed: false };
-        renderResumeBtn();
-      });
-    } else {
-      if (!api.arm_resume) return;
-      api.arm_resume().then((res) => {
-        resumeState = (res && res.ok)
-          ? { armed: true, resume_at: res.resume_at, count: res.count }
-          : { armed: false };
-        renderResumeBtn();
-      });
-    }
-  });
-
-  function pollResumeState() {
-    if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_resume_state)) return;
-    window.pywebview.api.get_resume_state().then((s) => {
-      resumeState = (s && s.armed) ? s : { armed: false };
-      renderResumeBtn();
-    }).catch(() => {});
-  }
 
   const phrases = ['> hi_', '> :)_', '> ok_', '> run_', '> yo_'];
 
@@ -854,8 +764,6 @@ animation: bob 2.2s ease-in-out infinite;
     setInterval(pollUsage, 15000);
     pollActivity();
     setInterval(pollActivity, 1200);
-    pollResumeState();
-    setInterval(pollResumeState, 15000);
   });
 
   // Live (5h) / weekly (7d) usage gauges, fed by claude-usage-statusline.ps1
@@ -938,8 +846,6 @@ animation: bob 2.2s ease-in-out infinite;
       // Mutually exclusive with resetting-soon on purpose: relief and dread
       // are opposite reactions to the same "near-limit" state, not a stack.
       pet.classList.toggle('critical-limit', nearLimit && !resettingSoon && fiveHourPct >= CRITICAL_LIMIT_PCT);
-      lastNearLimit = nearLimit;
-      renderResumeBtn();
     }).catch(() => {});
   }
 

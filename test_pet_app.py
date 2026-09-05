@@ -204,106 +204,6 @@ def _test_read_activity():
     print("OK: read_activity self-check passed")
 
 
-def _test_parse_resets_at():
-    """_parse_resets_at() must accept both shapes read_usage() can return."""
-    import datetime
-
-    assert pet_app._parse_resets_at(None) is None
-    assert pet_app._parse_resets_at(1700000000) == 1700000000.0
-    assert pet_app._parse_resets_at("not-a-date") is None
-    expected = datetime.datetime(2026, 8, 1, 12, 0, 0, tzinfo=datetime.timezone.utc).timestamp()
-    assert pet_app._parse_resets_at("2026-08-01T12:00:00Z") == expected
-
-    print("OK: _parse_resets_at self-check passed")
-
-
-def _test_arm_and_disarm_resume():
-    """
-    arm_resume() must snapshot resets_at + the sessions known right now,
-    persist them so a restart can pick the wait back up, and a fresh
-    arm_resume() (or disarm_resume()) must cancel any wait already running.
-    """
-    tmp_dir = tempfile.mkdtemp(prefix="claude_pet_resume_selfcheck_")
-    pet_app.CONFIG_PATH = os.path.join(tmp_dir, "config.json")
-    pet_app.USAGE_PATH = os.path.join(tmp_dir, "usage.json")
-    pet_app.ACTIVITY_GLOB = os.path.join(tmp_dir, "activity-*.json")
-    pet_app._resume_cancel = None
-
-    assert pet_app.arm_resume("claude") == {"ok": False, "error": "no_reset_time"}, \
-        "no usage data must mean nothing to arm"
-
-    resets_at = time.time() + 3600
-    with open(pet_app.USAGE_PATH, "w", encoding="utf-8") as f:
-        json.dump({"five_hour": {"used_percentage": 92, "resets_at": resets_at},
-                   "seven_day": {"used_percentage": 40, "resets_at": resets_at},
-                   "updated_at": time.time()}, f)
-
-    def write_activity(sid, obj):
-        with open(os.path.join(tmp_dir, "activity-%s.json" % sid), "w", encoding="utf-8") as f:
-            json.dump(obj, f)
-
-    write_activity("abc123", {"state": "idle", "cwd": r"C:\proj", "label": "proj",
-                               "updated_at": time.time()})
-    # A session with no real id (older Claude Code builds) is never resumable.
-    write_activity("default", {"state": "idle", "cwd": r"C:\other", "label": "other",
-                                "updated_at": time.time()})
-    # A session abandoned long enough ago must not be dragged back in either.
-    write_activity("stale999", {"state": "idle", "cwd": r"C:\gone", "label": "gone",
-                                 "updated_at": time.time() - pet_app.ACTIVITY_KEEP_SECS - 1})
-
-    result = pet_app.arm_resume("claude")
-    assert result == {"ok": True, "resume_at": resets_at, "count": 1}, result
-    cfg = pet_app.load_config("claude")
-    assert cfg["resume_armed"] is True
-    assert cfg["resume_sessions"] == [{"session_id": "abc123", "cwd": r"C:\proj", "label": "proj"}], \
-        cfg["resume_sessions"]
-    assert pet_app.get_resume_state("claude") == {"armed": True, "resume_at": resets_at, "count": 1}
-
-    first_cancel = pet_app._resume_cancel
-    assert first_cancel is not None and not first_cancel.is_set()
-
-    pet_app.arm_resume("claude")
-    assert first_cancel.is_set(), "arming again must cancel the superseded wait, not stack a second one"
-
-    pet_app.disarm_resume("claude")
-    assert pet_app._resume_cancel is None
-    assert pet_app.load_config("claude").get("resume_armed") is False
-    assert pet_app.get_resume_state("claude") == {"armed": False}
-
-    print("OK: arm_resume/disarm_resume self-check passed")
-
-
-def _test_resume_worker():
-    """The wait thread must launch every armed session once resume_at
-    passes, and must launch nothing at all once cancelled."""
-    tmp_dir = tempfile.mkdtemp(prefix="claude_pet_resume_worker_selfcheck_")
-    pet_app.CONFIG_PATH = os.path.join(tmp_dir, "config.json")
-    orig_interval = pet_app.RESUME_CHECK_INTERVAL
-    orig_launch = pet_app._launch_resume
-    launched = []
-    pet_app.RESUME_CHECK_INTERVAL = 0.05
-    pet_app._launch_resume = lambda session: launched.append(session)
-    try:
-        sessions = [{"session_id": "s1", "cwd": r"C:\a", "label": "a"}]
-
-        pet_app.update_config("claude", resume_armed=True)
-        pet_app._resume_worker("claude", time.time() + 0.1, sessions, threading.Event())
-        assert launched == sessions, "worker must launch every armed session once resume_at passes"
-        assert pet_app.load_config("claude").get("resume_armed") is False
-
-        launched.clear()
-        pet_app.update_config("claude", resume_armed=True)
-        cancelled = threading.Event()
-        cancelled.set()
-        pet_app._resume_worker("claude", time.time() + 10, sessions, cancelled)
-        assert launched == [], "a cancelled worker must never launch anything"
-    finally:
-        pet_app.RESUME_CHECK_INTERVAL = orig_interval
-        pet_app._launch_resume = orig_launch
-
-    print("OK: _resume_worker self-check passed")
-
-
 def _test_desktop_is_showing_no_hang():
     """
     desktop_is_showing() is called every 0.35s from a background thread per
@@ -657,11 +557,14 @@ def _test_read_discord_voice_state():
     print("OK: read_discord_voice_state self-check passed")
 
 
-def _test_read_system_health():
+def _test_sample_health_once():
     """
-    read_system_health() must read cpu/ram from psutil and gracefully report
-    battery_pct/on_battery as None on a desktop (sensors_battery() -> None
-    there, per psutil's own documented behavior).
+    _sample_health_once() must read cpu/ram/net from psutil, gracefully
+    report battery_pct/on_battery as None on a desktop (sensors_battery() ->
+    None there, per psutil's own documented behavior), and derive net
+    throughput from the byte-counter delta over the real elapsed time.
+    Tested directly rather than through read_system_health(), which now only
+    hands back whatever _health_sampler_loop()'s background thread cached.
     """
     import psutil
 
@@ -673,47 +576,58 @@ def _test_read_system_health():
             self.percent = percent
             self.power_plugged = plugged
 
+    class _FakeNet:
+        def __init__(self, recv, sent):
+            self.bytes_recv = recv
+            self.bytes_sent = sent
+
     real_cpu = psutil.cpu_percent
     real_mem = psutil.virtual_memory
     real_batt = psutil.sensors_battery
+    real_net = psutil.net_io_counters
     try:
         psutil.cpu_percent = lambda interval=None: 41.0
         psutil.virtual_memory = lambda: _FakeMem()
         psutil.sensors_battery = lambda: None  # desktop: no battery at all
-        result = pet_app.read_system_health()
-        assert result == {"cpu_pct": 41.0, "ram_pct": 62.5, "battery_pct": None, "on_battery": None}, result
+        psutil.net_io_counters = lambda: _FakeNet(2048, 1024)
+
+        last_net = _FakeNet(0, 0)
+        sample, net, sampled_at = pet_app._sample_health_once(last_net, time.time() - 1)
+        assert sample["cpu_pct"] == 41.0 and sample["ram_pct"] == 62.5, sample
+        assert sample["battery_pct"] is None and sample["on_battery"] is None, sample
+        assert net.bytes_recv == 2048 and net.bytes_sent == 1024
 
         psutil.sensors_battery = lambda: _FakeBattery(77, False)
-        result = pet_app.read_system_health()
-        assert result["battery_pct"] == 77 and result["on_battery"] is True, \
+        sample, net, _ = pet_app._sample_health_once(net, sampled_at)
+        assert sample["battery_pct"] == 77 and sample["on_battery"] is True, \
             "unplugged must report on_battery True"
+        assert sample["net_down_kbps"] == 0 and sample["net_up_kbps"] == 0, \
+            "identical counters since the last sample must mean zero throughput"
 
         psutil.sensors_battery = lambda: _FakeBattery(100, True)
-        result = pet_app.read_system_health()
-        assert result["on_battery"] is False, "plugged in must report on_battery False"
+        sample, _, _ = pet_app._sample_health_once(net, sampled_at)
+        assert sample["on_battery"] is False, "plugged in must report on_battery False"
     finally:
         psutil.cpu_percent = real_cpu
         psutil.virtual_memory = real_mem
         psutil.sensors_battery = real_batt
+        psutil.net_io_counters = real_net
 
     # get_system_health() must stay gated to the system pet, same as get_media().
     assert pet_app.Api(1080, lambda: None, "claude").get_system_health() is None
 
-    print("OK: read_system_health self-check passed")
+    print("OK: _sample_health_once self-check passed")
 
 
 def main():
     _test_task_state()
     _test_read_usage()
     _test_read_activity()
-    _test_parse_resets_at()
-    _test_arm_and_disarm_resume()
-    _test_resume_worker()
     _test_read_vlc_media()
     _test_read_spotify_volume()
     _test_read_vscode_dirty()
     _test_read_discord_voice_state()
-    _test_read_system_health()
+    _test_sample_health_once()
     _test_desktop_is_showing_no_hang()
 
     assert sys.platform == "win32", "the rest of this self-check only applies on Windows"
