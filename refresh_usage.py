@@ -11,6 +11,38 @@ nothing appears on the user's screen.
 sends one minimal prompt and waits for usage.json to come back with a non-null
 five_hour percentage.
 
+COST - the whole point of the flags below
+-----------------------------------------
+The first version of this script paid full price for that turn: a default
+session carries every plugin, skill, MCP definition and tool schema into the
+request. Measured on this machine: ~12k tokens of Opus per run, ~$0.18, every
+5 minutes - about 57% of a Pro WEEKLY allowance spent on gauges.
+
+Everything cheaper was tried and measured, not guessed:
+
+  no local source exists      ~/.claude transcripts, sessions/, usage.db and
+                              every hook payload were checked - none of them
+                              carry the live percentages. Only a live API
+                              turn does, so a turn has to happen.
+  --print is 50x cheaper      and useless: a statusLine never runs under -p,
+                              and print mode's rate_limit_event has resetsAt
+                              but no percentage.
+  --safe-mode strips the      it also strips the statusLine, and no --settings
+  user's whole config         override brings it back. Verified: the session
+                              ran, the footer stayed default, nothing wrote.
+  --setting-sources project   works - an empty scratch workspace whose only
+  + a one-key settings file   project setting is the statusLine.
+  --system-prompt /           silently ignored by an interactive session; it
+  --disallowed-tools          shipped 23k tokens anyway.
+  --agent with tools: []      the one that mattered: 23k -> 1,206 tokens.
+
+Measured end state: 1,206 in / ~240 out of Haiku per run, ~$0.0024. At the
+10-minute interval install.ps1 registers, that is ~$2.43 a week against a
+weekly limit calibrated at ~$6.40 per 1% (three gauge points were watched
+against every token this machine spent in the same window) - i.e. ~0.4% of the
+weekly allowance, down from ~57%. That margin is why the scheduled task now
+ships ENABLED; the pet's settings window can still turn it off.
+
 Exit codes: 0 real numbers written, 1 timed out / still null.
 """
 import json
@@ -20,11 +52,11 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 
 from winpty import PtyProcess
 
 USAGE = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet\usage.json")
-WORKDIR = os.path.expanduser("~")
 
 
 def find_claude():
@@ -44,6 +76,95 @@ def find_claude():
         if os.path.isfile(c):
             return c
     return None
+
+
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+STATUSLINE = os.path.join(APP_DIR, "claude-usage-statusline.ps1")
+
+# One fixed id per run, so the transcript this session leaves behind can be
+# deleted by name afterwards. (--no-session-persistence would be the obvious
+# answer, but it only works with --print, and --print never runs a statusLine.)
+SESSION_ID = str(uuid.uuid4())
+
+
+def cheap_workspace():
+    """
+    A scratch directory whose project settings hold nothing but the statusLine.
+
+    The statusLine is the only reason this session exists - it is what writes
+    usage.json - but it normally lives in the user's own settings, and loading
+    those drags in every plugin, hook and MCP server with it (that is the ~12k
+    tokens). --safe-mode strips all of it, the statusLine included, and no
+    --settings override brings the statusLine back: tested, and the footer
+    stayed the default one.
+
+    So instead of subtracting from the user's config, run somewhere that has
+    none: an empty folder, `--setting-sources project`, and a .claude/
+    settings.json containing exactly one key.
+    """
+    ws = os.path.join(os.path.dirname(USAGE), "refresh-workspace")
+    dot = os.path.join(ws, ".claude")
+    os.makedirs(dot, exist_ok=True)
+    with open(os.path.join(dot, "settings.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "statusLine": {
+                "type": "command",
+                "command": ('powershell -NoProfile -ExecutionPolicy Bypass '
+                            f'-File "{STATUSLINE}"'),
+            },
+            # Otherwise every run registers a Remote Control session, and the
+            # user's session list fills up with one throwaway "gauge" session
+            # per refresh (observed: a bridgeSessionId on each spawn). Project
+            # settings are allowed to turn Remote Control OFF - they are only
+            # forbidden from turning it on - so this is the one place the
+            # scratch workspace can actually override the global default.
+            "remoteControlAtStartup": False,
+        }, f)
+    return ws
+
+
+def cheap_args():
+    """One refresh, ~$0.0024 instead of ~$0.18. See the module docstring."""
+    return [
+        "--setting-sources", "project",
+        # MCP servers are configured in ~/.claude.json, which --setting-sources
+        # does not cover - without these two the session still loaded every
+        # server's tool schemas (103k tokens of cache read, measured).
+        "--strict-mcp-config",
+        "--mcp-config", '{"mcpServers":{}}',
+        "--disable-slash-commands",
+        "--model", "haiku",
+        "--effort", "low",
+        "--session-id", SESSION_ID,
+        # The one flag that matters. An interactive session ignores
+        # --system-prompt and --disallowed-tools and ships Claude Code's whole
+        # prompt and tool set anyway (23k tokens, measured); starting it as an
+        # agent with no tools cuts the request to 1,200.
+        "--agents", json.dumps({"gauge": {
+            "description": "usage probe",
+            "prompt": "Answer with the single word: ok. Never explain.",
+            "tools": []}}),
+        "--agent", "gauge",
+    ]
+
+
+def drop_transcript():
+    """
+    Delete the session this run created.
+
+    Left alone, a refresh every 10 minutes buries ~/.claude/projects under a
+    thousand dead transcripts a week - the 5-minute version had already left
+    5,172 of them. Deleting by our own --session-id touches nothing the user
+    started themselves.
+    """
+    proj = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+    try:
+        for d in os.listdir(proj):
+            f = os.path.join(proj, d, SESSION_ID + ".jsonl")
+            if os.path.isfile(f):
+                os.remove(f)
+    except Exception:
+        pass
 
 
 CLAUDE = find_claude()
@@ -132,7 +253,8 @@ if not CLAUDE:
     sys.exit(2)
 
 baseline_updated_at = read_updated_at()
-p = PtyProcess.spawn([CLAUDE], dimensions=(45, 130), cwd=WORKDIR, env=env)
+p = PtyProcess.spawn([CLAUDE] + cheap_args(), dimensions=(45, 130),
+                     cwd=cheap_workspace(), env=env)
 note("spawned")
 
 
@@ -144,7 +266,10 @@ def reader():
                 time.sleep(0.05)
                 continue
             with lock:
-                buf[0] += d
+                # Only the tail is ever inspected, and an idle TUI redraws its
+                # spinner forever - keeping the whole thing makes flat() scan
+                # a growing buffer every 0.6s and the script crawls.
+                buf[0] = (buf[0] + d)[-40000:]
         except Exception:
             return
 
@@ -196,6 +321,11 @@ try:
     p.terminate(force=True)
 except Exception:
     pass
+
+# REFRESH_KEEP=1 leaves the transcript behind, which is the only way to read
+# back what a real run actually cost (the print-mode equivalent is a proxy).
+if os.environ.get("REFRESH_KEEP") != "1":
+    drop_transcript()
 
 if ok:
     with open(USAGE, encoding="utf-8-sig") as f:

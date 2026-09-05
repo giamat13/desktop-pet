@@ -76,6 +76,35 @@
     </div>
   </div>
 
+  <!-- Claude only, and only when the scheduled task exists. On by default:
+       a refresh now costs ~1.2k Haiku tokens, ~0.4% of the weekly allowance
+       at 10-minute intervals (it was ~57% before). Off, the gauges only
+       update when you talk to Claude in a real terminal yourself. -->
+  <div class="row" id="refreshRow" hidden>
+    <span class="label">שעוני שימוש</span>
+    <div class="modes" id="refreshModes">
+      <button data-refresh="1">מתעדכנים לבד</button>
+      <button data-refresh="0">כבויים</button>
+    </div>
+    <span class="value">רענון כל 10 דק׳ ≈ 0.4% מהמכסה השבועית (היה 57%). כבוי: מתעדכן רק כששולחים הודעה לקלוד בטרמינל.</span>
+  </div>
+
+  <!-- System pet only: pick what each corner gauge shows instead of the
+       fixed CPU/RAM assignment. Hidden until get_pet_config() names the pet. -->
+  <div class="row" id="gaugeRow" hidden>
+    <span class="label">מה מוצג במדים</span>
+    <div style="display:flex; gap:8px;">
+      <select id="gaugeLeftSelect"></select>
+      <select id="gaugeRightSelect"></select>
+    </div>
+  </div>
+
+  <!-- System pet only: what the die's live history graph plots. -->
+  <div class="row" id="graphRow" hidden>
+    <span class="label">מה מוצג בגרף</span>
+    <select id="graphSelect"></select>
+  </div>
+
   <div class="row">
     <span class="label">כוונון עדין</span>
     <input id="margin" type="range" min="-80" max="180" value="46" />
@@ -101,7 +130,41 @@
   const modeButtons    = [...document.querySelectorAll('#positionModes button')];
   const sessionRow     = document.getElementById('sessionRow');
   const sessionButtons = [...document.querySelectorAll('#sessionModes button')];
+  const refreshRow     = document.getElementById('refreshRow');
+  const refreshButtons = [...document.querySelectorAll('#refreshModes button')];
+  const gaugeRow          = document.getElementById('gaugeRow');
+  const gaugeLeftSelect   = document.getElementById('gaugeLeftSelect');
+  const gaugeRightSelect  = document.getElementById('gaugeRightSelect');
+  const graphRow          = document.getElementById('graphRow');
+  const graphSelect       = document.getElementById('graphSelect');
   const saveBtn        = document.getElementById('save');
+
+  // System pet only - what each corner gauge can show instead of the fixed
+  // CPU/RAM pair. Kept in sync with SettingsApi._ALLOWED_GAUGE_METRICS in pet_app.py.
+  const GAUGE_METRICS = [
+    ['cpu', 'מעבד (CPU)'],
+    ['ram', 'זיכרון (RAM)'],
+    ['battery', 'סוללה'],
+    ['net_down', 'הורדה'],
+    ['net_up', 'העלאה'],
+  ];
+  [gaugeLeftSelect, gaugeRightSelect, graphSelect].forEach((sel) => {
+    GAUGE_METRICS.forEach(([value, label]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    });
+  });
+  gaugeLeftSelect.addEventListener('change', () => {
+    if (api() && api().set_gauge_metric) api().set_gauge_metric('left', gaugeLeftSelect.value);
+  });
+  gaugeRightSelect.addEventListener('change', () => {
+    if (api() && api().set_gauge_metric) api().set_gauge_metric('right', gaugeRightSelect.value);
+  });
+  graphSelect.addEventListener('change', () => {
+    if (api() && api().set_graph_metric) api().set_graph_metric(graphSelect.value);
+  });
 
   function api() {
     return (window.pywebview && window.pywebview.api) || null;
@@ -125,6 +188,14 @@
     const sessionMode = cfg.session_mode === 'lock' ? 'lock' : 'split';
     sessionButtons.forEach(b => b.classList.toggle('active', b.dataset.sessionMode === sessionMode));
     sessionRow.hidden = cfg.pet !== 'claude';
+    // null (task not registered) hides the row - nothing to toggle.
+    refreshRow.hidden = cfg.usage_refresh === null || cfg.usage_refresh === undefined;
+    setRefresh(cfg.usage_refresh ? '1' : '0');
+    gaugeRow.hidden = cfg.pet !== 'system';
+    gaugeLeftSelect.value = cfg.gauge_left || 'cpu';
+    gaugeRightSelect.value = cfg.gauge_right || 'ram';
+    graphRow.hidden = cfg.pet !== 'system';
+    graphSelect.value = cfg.graph_metric || 'cpu';
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.
@@ -159,6 +230,20 @@
           marginValue.textContent = margin + 'px';
         }
       });
+    }
+  }));
+
+  function setRefresh(v) {
+    refreshButtons.forEach(b => b.classList.toggle('active', b.dataset.refresh === v));
+  }
+
+  refreshButtons.forEach(b => b.addEventListener('click', () => {
+    setRefresh(b.dataset.refresh);
+    if (api() && api().set_usage_refresh) {
+      // Re-sync from what the task actually reports: enabling can fail
+      // (task removed, policy), and the buttons must not lie about it.
+      api().set_usage_refresh(b.dataset.refresh === '1')
+           .then(on => setRefresh(on ? '1' : '0'));
     }
   }));
 

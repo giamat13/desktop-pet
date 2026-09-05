@@ -78,27 +78,42 @@ if (Test-Path $vlcrc) {
     Write-Host "VLC config not found - skipping VLC progress-bar setup (run VLC once, then re-run this script)."
 }
 
-# Keep the usage gauges fed.
+# Keep the usage gauges fed without an interactive terminal.
 #
 # Claude Code only renders its status line - and therefore only runs
-# claude-usage-statusline.ps1 - inside an interactive terminal session. It
-# never fires in the VS Code extension, so without this the gauges would only
-# ever update on the rare occasions the user ran `claude` in a real terminal.
-# refresh_usage.py drives one short session in a hidden ConPTY to collect the
-# numbers. Each run costs one tiny API turn, so keep the interval modest.
+# claude-usage-statusline.ps1 - inside an interactive terminal session, never
+# in the VS Code extension. refresh_usage.py works around that by driving one
+# short session in a hidden ConPTY.
 #
-# To stop it:    Unregister-ScheduledTask -TaskName DesktopPetUsageRefresh -Confirm:$false
+# That session used to be a full-price one: every plugin, skill and MCP
+# definition in the request, ~12k tokens of Opus every 5 minutes, which
+# measured out at ~57% of a Pro WEEKLY allowance spent on gauges. It is now
+# a no-tools Haiku agent in an empty workspace - 1,206 tokens, ~$0.0024 a run,
+# ~0.4% of the weekly allowance at the 10-minute interval below (the full
+# derivation is in refresh_usage.py's docstring). That is what makes it
+# defensible to ship this ON; the pet's settings window turns it off.
+#
+# To remove it:  Unregister-ScheduledTask -TaskName DesktopPetUsageRefresh -Confirm:$false
 $taskName = "DesktopPetUsageRefresh"
+# Re-running the installer must not flip a choice the user already made in the
+# settings window - only a first install (task absent) decides, and it says on.
+$existing = (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State
+$wasDisabled = $existing -eq "Disabled"
 $action = New-ScheduledTaskAction -Execute $pythonwExe `
     -Argument "`"$installDir\refresh_usage.py`"" -WorkingDirectory $installDir
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes 5)
+    -RepetitionInterval (New-TimeSpan -Minutes 10)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 3) `
     -MultipleInstances IgnoreNew -StartWhenAvailable
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Settings $settings -Description "Refreshes DesktopPet usage gauges" -Force | Out-Null
-Write-Host "Registered usage refresh task '$taskName' (every 5 min)."
+if ($wasDisabled) {
+    Disable-ScheduledTask -TaskName $taskName | Out-Null
+    Write-Host "Usage refresh task '$taskName' left OFF (your setting kept)."
+} else {
+    Write-Host "Registered usage refresh task '$taskName' (every 10 min, ~0.4% of the weekly allowance)."
+}
 
 $startupFolder = [Environment]::GetFolderPath("Startup")
 $shortcutPath = Join-Path $startupFolder "DesktopPet.lnk"

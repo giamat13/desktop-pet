@@ -88,6 +88,22 @@ def _wait_for(cond, timeout=3.0):
     raise AssertionError("condition not met within timeout")
 
 
+def _test_task_state():
+    """
+    _task_state() decides whether the settings toggle shows on or off.
+
+    "Running" is the trap: a task caught mid-run reports it instead of
+    "Ready", and reading only "Ready" as on would flip the switch back under
+    the user every time the refresh happened to be executing.
+    """
+    assert pet_app._task_state("Ready" + chr(10)) is True
+    assert pet_app._task_state("Running") is True, "a mid-run task is still enabled"
+    assert pet_app._task_state("Disabled" + chr(13) + chr(10)) is False
+    assert pet_app._task_state("") is None, "no task registered must read as None"
+    assert pet_app._task_state(None) is None
+    print("OK: _task_state self-check passed")
+
+
 def _test_read_usage():
     """read_usage() must hide stale data and surface fresh data untouched."""
     tmp_dir = tempfile.mkdtemp(prefix="claude_pet_usage_selfcheck_")
@@ -117,6 +133,13 @@ def _test_read_usage():
     with open(pet_app.USAGE_PATH, "rb") as f:
         assert f.read(3) == b"\xef\xbb\xbf", "fixture must actually carry a BOM"
     assert pet_app.read_usage() is not None, "usage.json with a UTF-8 BOM must still parse"
+
+    # The refresh task's own session writes this on its way up, before its
+    # first API response fills in rate_limits.
+    blank = dict(fresh, five_hour={"used_percentage": None, "resets_at": None})
+    with open(pet_app.USAGE_PATH, "w", encoding="utf-8") as f:
+        json.dump(blank, f)
+    assert pet_app.read_usage() is None, "fresh usage.json with a null percentage must read as None"
 
     print("OK: read_usage self-check passed")
 
@@ -534,11 +557,14 @@ def _test_read_discord_voice_state():
     print("OK: read_discord_voice_state self-check passed")
 
 
-def _test_read_system_health():
+def _test_sample_health_once():
     """
-    read_system_health() must read cpu/ram from psutil and gracefully report
-    battery_pct/on_battery as None on a desktop (sensors_battery() -> None
-    there, per psutil's own documented behavior).
+    _sample_health_once() must read cpu/ram/net from psutil, gracefully
+    report battery_pct/on_battery as None on a desktop (sensors_battery() ->
+    None there, per psutil's own documented behavior), and derive net
+    throughput from the byte-counter delta over the real elapsed time.
+    Tested directly rather than through read_system_health(), which now only
+    hands back whatever _health_sampler_loop()'s background thread cached.
     """
     import psutil
 
@@ -550,43 +576,58 @@ def _test_read_system_health():
             self.percent = percent
             self.power_plugged = plugged
 
+    class _FakeNet:
+        def __init__(self, recv, sent):
+            self.bytes_recv = recv
+            self.bytes_sent = sent
+
     real_cpu = psutil.cpu_percent
     real_mem = psutil.virtual_memory
     real_batt = psutil.sensors_battery
+    real_net = psutil.net_io_counters
     try:
         psutil.cpu_percent = lambda interval=None: 41.0
         psutil.virtual_memory = lambda: _FakeMem()
         psutil.sensors_battery = lambda: None  # desktop: no battery at all
-        result = pet_app.read_system_health()
-        assert result == {"cpu_pct": 41.0, "ram_pct": 62.5, "battery_pct": None, "on_battery": None}, result
+        psutil.net_io_counters = lambda: _FakeNet(2048, 1024)
+
+        last_net = _FakeNet(0, 0)
+        sample, net, sampled_at = pet_app._sample_health_once(last_net, time.time() - 1)
+        assert sample["cpu_pct"] == 41.0 and sample["ram_pct"] == 62.5, sample
+        assert sample["battery_pct"] is None and sample["on_battery"] is None, sample
+        assert net.bytes_recv == 2048 and net.bytes_sent == 1024
 
         psutil.sensors_battery = lambda: _FakeBattery(77, False)
-        result = pet_app.read_system_health()
-        assert result["battery_pct"] == 77 and result["on_battery"] is True, \
+        sample, net, _ = pet_app._sample_health_once(net, sampled_at)
+        assert sample["battery_pct"] == 77 and sample["on_battery"] is True, \
             "unplugged must report on_battery True"
+        assert sample["net_down_kbps"] == 0 and sample["net_up_kbps"] == 0, \
+            "identical counters since the last sample must mean zero throughput"
 
         psutil.sensors_battery = lambda: _FakeBattery(100, True)
-        result = pet_app.read_system_health()
-        assert result["on_battery"] is False, "plugged in must report on_battery False"
+        sample, _, _ = pet_app._sample_health_once(net, sampled_at)
+        assert sample["on_battery"] is False, "plugged in must report on_battery False"
     finally:
         psutil.cpu_percent = real_cpu
         psutil.virtual_memory = real_mem
         psutil.sensors_battery = real_batt
+        psutil.net_io_counters = real_net
 
     # get_system_health() must stay gated to the system pet, same as get_media().
     assert pet_app.Api(1080, lambda: None, "claude").get_system_health() is None
 
-    print("OK: read_system_health self-check passed")
+    print("OK: _sample_health_once self-check passed")
 
 
 def main():
+    _test_task_state()
     _test_read_usage()
     _test_read_activity()
     _test_read_vlc_media()
     _test_read_spotify_volume()
     _test_read_vscode_dirty()
     _test_read_discord_voice_state()
-    _test_read_system_health()
+    _test_sample_health_once()
     _test_desktop_is_showing_no_hang()
 
     assert sys.platform == "win32", "the rest of this self-check only applies on Windows"

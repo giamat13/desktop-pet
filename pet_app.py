@@ -36,12 +36,21 @@ CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.json")
 LOG_PATH = os.path.join(CONFIG_DIR, "log.txt")
 USAGE_PATH = os.path.join(CONFIG_DIR, "usage.json")
-# usage.json is refreshed by refresh_usage.py on a 5-minute scheduled task
-# (and by any interactive `claude` session's status line). Anything older than
-# this means the refresher has stopped, not that usage is genuinely 0 - the
-# gauges hide rather than show a frozen number. Kept comfortably above the
-# 5-minute refresh interval so one missed run doesn't blink the gauges out.
-USAGE_STALE_SECS = 12 * 60
+# usage.json is written by any interactive `claude` session's status line, and
+# by refresh_usage.py's scheduled task if the user turned it on (see
+# REFRESH_TASK below - it ships off). Anything older than this is dropped
+# rather than shown: a number nobody refreshed for ten minutes is a guess, and
+# a frozen gauge is worse than a hidden one.
+USAGE_STALE_SECS = 10 * 60
+
+# The scheduled task registered by install.ps1. Each run spawns a real
+# `claude` session purely to harvest rate-limit numbers. That used to cost ~12k
+# tokens of Opus every 5 minutes (~57% of a Pro weekly allowance, on gauges);
+# refresh_usage.py now does it with a no-tools Haiku agent for ~1.2k tokens
+# every 10 minutes, ~0.4% of the allowance, which is why it ships on. The
+# toggle below flips the task itself - the task state IS the setting, so there
+# is no second copy of it in config.json to disagree with reality.
+REFRESH_TASK = "DesktopPetUsageRefresh"
 
 ACTIVITY_GLOB = os.path.join(CONFIG_DIR, "activity-*.json")
 # claude-activity-status.ps1 (a Claude Code hook, not a poller) rewrites one
@@ -895,7 +904,60 @@ def read_usage():
         return None
     if time.time() - data.get("updated_at", 0) > USAGE_STALE_SECS:
         return None
+    # The status line runs on every status update, including the ones before a
+    # session's first API response - and `rate_limits` is empty until then, so
+    # it writes a fresh-but-null file. Caught in the wild: the refresh task
+    # blanked the gauges for ~20s of every cycle. Fresh-and-null is no data.
+    if data.get("five_hour", {}).get("used_percentage") is None:
+        return None
     return data
+
+
+def _task_state(out):
+    """
+    Map `Get-ScheduledTask ... State` output to True/False/None.
+
+    Split out from the subprocess call so it can be tested: the State enum
+    prints as a word ("Ready", "Running", "Disabled"), and everything that is
+    not "Disabled" counts as on - a task caught mid-run reports "Running", and
+    treating that as off would flip the settings toggle back under the user.
+    None means the task isn't registered at all (older install, or removed).
+    """
+    state = (out or "").strip().lower()
+    if not state:
+        return None
+    return state != "disabled"
+
+
+def _ps(script, timeout=15):
+    """PowerShell one-liner, no console flash (the app runs under pythonw)."""
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def get_usage_refresh():
+    """True/False if the usage-refresh task exists and is on/off, else None."""
+    try:
+        r = _ps(f"(Get-ScheduledTask -TaskName {REFRESH_TASK} "
+                "-ErrorAction SilentlyContinue).State")
+        return _task_state(r.stdout)
+    except Exception as exc:
+        log("get_usage_refresh failed:", exc)
+        return None
+
+
+def set_usage_refresh(on):
+    """Turn the paid background refresh on or off. Returns the new state."""
+    verb = "Enable" if on else "Disable"
+    try:
+        _ps(f"{verb}-ScheduledTask -TaskName {REFRESH_TASK} "
+            "-ErrorAction SilentlyContinue | Out-Null")
+    except Exception as exc:
+        log("set_usage_refresh failed:", exc)
+    return get_usage_refresh()
 
 
 def read_activity():
@@ -1264,30 +1326,116 @@ def read_discord_voice_state():
         return None  # this key doesn't exist on this Windows build/edition
 
 
+_health_lock = threading.Lock()
+_health_cache = {
+    "cpu_pct": None, "ram_pct": None, "battery_pct": None, "on_battery": None,
+    "net_down_kbps": None, "net_up_kbps": None,
+}
+_health_sampler_started = False
+
+
+def _sample_health_once(last_net, last_t):
+    """
+    One real sample: blocks ~1s on psutil.cpu_percent(interval=1). Split out
+    of _health_sampler_loop() so it can be unit-tested synchronously, with
+    psutil monkeypatched, instead of racing a background thread.
+
+    psutil.cpu_percent(interval=None) - what this used to call from the 2s JS
+    poll - returns 0.0 on its very first call ever in the process (nothing to
+    compare against yet) and is comparing against whatever time last elapsed
+    since the previous poll, which drifts once the poll interval itself jitters
+    (GC pause, window drag, etc). Blocking on interval=1 here instead measures
+    a real, fixed 1-second window every time - accurate on every sample,
+    including the first - at the cost of living on a thread the JS bridge
+    never touches directly.
+
+    Returns (sample_dict, net_counters, sampled_at) - the last two feed back
+    in as last_net/last_t for the next call, to derive net throughput.
+    """
+    import psutil
+    cpu_pct = psutil.cpu_percent(interval=1)  # blocks the calling thread only
+    ram_pct = psutil.virtual_memory().percent
+    battery = psutil.sensors_battery()
+    now = time.time()
+    net = psutil.net_io_counters()
+    dt = max(now - last_t, 0.001)
+    down_kbps = (net.bytes_recv - last_net.bytes_recv) / dt / 1024
+    up_kbps = (net.bytes_sent - last_net.bytes_sent) / dt / 1024
+    sample = {
+        "cpu_pct": cpu_pct,
+        "ram_pct": ram_pct,
+        "battery_pct": battery.percent if battery else None,
+        "on_battery": (not battery.power_plugged) if battery else None,
+        "net_down_kbps": max(0.0, down_kbps),
+        "net_up_kbps": max(0.0, up_kbps),
+    }
+    return sample, net, now
+
+
+def _health_sampler_loop():
+    """Runs forever on its own thread, one real sample per second."""
+    import psutil
+    last_net = psutil.net_io_counters()
+    last_t = time.time()
+    while True:
+        try:
+            sample, last_net, last_t = _sample_health_once(last_net, last_t)
+            with _health_lock:
+                _health_cache.update(sample)
+        except Exception as exc:
+            log("health sampler failed:", exc)
+            time.sleep(1)
+
+
 def read_system_health():
     """
-    CPU/RAM/battery snapshot for the system-health pet - the one pet with no
-    target app of its own. battery_pct/on_battery are None on any desktop
-    (psutil.sensors_battery() returns None with no battery at all), so the
-    pet just hides that gauge instead of showing a fake one.
+    CPU/RAM/battery/network snapshot for the system-health pet - the one pet
+    with no target app of its own. battery_pct/on_battery are None on any
+    desktop (psutil.sensors_battery() returns None with no battery at all), so
+    the pet just hides that gauge instead of showing a fake one. Real work
+    happens on _health_sampler_loop(); this just hands back its latest cache.
     """
+    global _health_sampler_started
     try:
-        import psutil
+        import psutil  # noqa: F401 - only to fail fast/None if psutil is missing
     except ImportError:
         return None
+    with _health_lock:
+        if not _health_sampler_started:
+            _health_sampler_started = True
+            threading.Thread(target=_health_sampler_loop, daemon=True).start()
+        cache = dict(_health_cache)
+    if cache["cpu_pct"] is None:
+        return None  # first second of sampling hasn't landed yet
+    return cache
+
+
+BOOST_SCRIPT_URL = "https://raw.githubusercontent.com/giamat13/100RAMoptimal/refs/heads/main/main.py"
+
+
+def run_boost():
+    """
+    Download 100RAMoptimal's main.py and launch it in QuickClean ("fast mode")
+    - frees RAM/temp files without the DeepClean extras (Recycle Bin, DNS
+    flush, winget upgrade). The script self-elevates via its own UAC prompt
+    (ShellExecuteW 'runas'), so it must be relaunched from a console python.exe,
+    not the windowless pythonw.exe this app runs under - sys.executable here IS
+    pythonw.exe, and the script reuses sys.executable verbatim to relaunch
+    itself elevated, so the swap has to happen before we ever hand it control.
+    """
+    import urllib.request
     try:
-        cpu_pct = psutil.cpu_percent(interval=None)
-        ram_pct = psutil.virtual_memory().percent
-        battery = psutil.sensors_battery()
-        return {
-            "cpu_pct": cpu_pct,
-            "ram_pct": ram_pct,
-            "battery_pct": battery.percent if battery else None,
-            "on_battery": (not battery.power_plugged) if battery else None,
-        }
+        with urllib.request.urlopen(BOOST_SCRIPT_URL, timeout=15) as resp:
+            src = resp.read()
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        dest = os.path.join(CONFIG_DIR, "boost.py")
+        with open(dest, "wb") as f:
+            f.write(src)
+        python_exe = sys.executable.replace("pythonw.exe", "python.exe")
+        subprocess.Popen([python_exe, dest, "--quickclean"],
+                          creationflags=subprocess.CREATE_NEW_CONSOLE)
     except Exception as exc:
-        log("read_system_health failed:", exc)
-        return None
+        log("run_boost failed:", exc)
 
 
 def get_pet_config(pet):
@@ -1302,6 +1450,16 @@ def get_pet_config(pet):
         # (default) divides its body into one band per session, "lock" follows
         # a single session and ignores the rest. Claude pet only.
         "session_mode": cfg.get("session_mode", "split"),
+        # Whether the paid background usage refresh is on. None = the task
+        # isn't registered, so settings.html hides the row entirely rather
+        # than offering a switch that flips nothing. Claude pet only.
+        "usage_refresh": get_usage_refresh() if pet == "claude" else None,
+        # Which metric each corner gauge shows. System pet only; settings.html
+        # hides the row for every other pet, same convention as the two above.
+        "gauge_left": cfg.get("gauge_left", "cpu"),
+        "gauge_right": cfg.get("gauge_right", "ram"),
+        # Which metric the die's live history graph plots. System pet only.
+        "graph_metric": cfg.get("graph_metric", "cpu"),
     }
 
 
@@ -1372,6 +1530,15 @@ class Api:
             return None
         return read_system_health()
 
+    def run_boost(self):
+        """Boost button: download + launch 100RAMoptimal in QuickClean mode.
+        Fire-and-forget on its own thread - the download and the UAC prompt
+        both take longer than the JS bridge should ever block for."""
+        if self._pet != "system":
+            return {"ok": False, "error": "wrong_pet"}
+        threading.Thread(target=run_boost, daemon=True).start()
+        return {"ok": True}
+
     def open_settings_window(self):
         """Middle-click the pet -> open settings in its own native window."""
         try:
@@ -1382,9 +1549,10 @@ class Api:
                 title="הגדרות",
                 url=SETTINGS_PATH,
                 width=320,
-                # Claude gets one extra row (multi-session mode); the row is
-                # hidden for every other pet, so their window stays short.
-                height=420 if self._pet == "claude" else 340,
+                # Claude gets two extra rows (multi-session mode, background
+                # refresh); both are hidden for every other pet, so their
+                # window stays short.
+                height=520 if self._pet == "claude" else (420 if self._pet == "system" else 340),
                 on_top=True,
                 resizable=False,
                 js_api=sapi,
@@ -1518,6 +1686,41 @@ class SettingsApi:
                 self._pet_window.evaluate_js(f"applySessionMode('{mode}')")
         except Exception as exc:
             log("set_session_mode failed:", exc)
+
+    def set_usage_refresh(self, on):
+        """
+        Toggle the background usage refresh. On (the default) the gauges stay
+        current on their own, for ~0.4% of the weekly allowance; off, they are
+        fed only by the status line of interactive `claude` sessions - free,
+        but nothing updates while the user works in the VS Code extension, so
+        the gauges spend most of their time hidden as stale.
+        """
+        if self._pet != "claude":
+            return None
+        return set_usage_refresh(bool(on))
+
+    # Underscore-prefixed: see Api.__init__ on why nothing non-JS-facing here
+    # can be a bare public attribute.
+    _ALLOWED_GAUGE_METRICS = {"cpu", "ram", "battery", "net_down", "net_up"}
+
+    def set_gauge_metric(self, side, metric):
+        """
+        System pet only: pick what the left/right corner gauge shows, in place
+        of the fixed CPU/RAM assignment. Pushed live like set_size/set_session_mode.
+        """
+        if self._pet != "system" or side not in ("left", "right") or metric not in self._ALLOWED_GAUGE_METRICS:
+            return
+        update_config(self._pet, **{f"gauge_{side}": metric})
+        if self._pet_window:
+            self._pet_window.evaluate_js(f"applyGaugeMetric('{side}', '{metric}')")
+
+    def set_graph_metric(self, metric):
+        """System pet only: pick what the die's live history graph plots."""
+        if self._pet != "system" or metric not in self._ALLOWED_GAUGE_METRICS:
+            return
+        update_config(self._pet, graph_metric=metric)
+        if self._pet_window:
+            self._pet_window.evaluate_js(f"applyGraphMetric('{metric}')")
 
     def close_settings(self):
         try:
