@@ -1330,8 +1330,32 @@ _health_lock = threading.Lock()
 _health_cache = {
     "cpu_pct": None, "ram_pct": None, "battery_pct": None, "on_battery": None,
     "net_down_kbps": None, "net_up_kbps": None,
+    # Running count of foreground-window changes, for the "window" blink
+    # metric. A count rather than a timestamp so a 2s JS poll can detect a
+    # switch that happened and ended between two polls just by seeing the
+    # number move - a "last switch time" field could get overwritten before
+    # JS ever reads it.
+    "window_switches": 0,
 }
 _health_sampler_started = False
+
+
+def _foreground_window_changed(last_fg):
+    """
+    Cheap poll of the current foreground window, for _health_sampler_loop's
+    once-a-second cadence. Returns (changed, new_fg). Uses the same private
+    ctypes USER32 handle as desktop_is_showing() - GetForegroundWindow via
+    pywin32 has hung cross-thread on this machine before (see that function's
+    docstring); this call is read-only and takes no lock, so it is cheap
+    insurance even at 1Hz.
+    """
+    if USER32 is None:
+        return False, last_fg
+    try:
+        fg = USER32.GetForegroundWindow()
+    except Exception:
+        return False, last_fg
+    return (last_fg is not None and fg != last_fg), fg
 
 
 def _sample_health_once(last_net, last_t):
@@ -1377,11 +1401,15 @@ def _health_sampler_loop():
     import psutil
     last_net = psutil.net_io_counters()
     last_t = time.time()
+    last_fg = None
     while True:
         try:
             sample, last_net, last_t = _sample_health_once(last_net, last_t)
+            changed, last_fg = _foreground_window_changed(last_fg)
             with _health_lock:
                 _health_cache.update(sample)
+                if changed:
+                    _health_cache["window_switches"] += 1
         except Exception as exc:
             log("health sampler failed:", exc)
             time.sleep(1)
@@ -1460,6 +1488,9 @@ def get_pet_config(pet):
         "gauge_right": cfg.get("gauge_right", "ram"),
         # Which metric the die's live history graph plots. System pet only.
         "graph_metric": cfg.get("graph_metric", "cpu"),
+        # What drives how fast the pet blinks. System pet only; default "cpu"
+        # keeps today's behavior (busier machine = more alert-looking pet).
+        "blink_metric": cfg.get("blink_metric", "cpu"),
     }
 
 
@@ -1721,6 +1752,19 @@ class SettingsApi:
         update_config(self._pet, graph_metric=metric)
         if self._pet_window:
             self._pet_window.evaluate_js(f"applyGraphMetric('{metric}')")
+
+    # "net" folds net_down/net_up into one choice - the blink rate only needs
+    # "is a transfer happening", not which direction. "window" isn't a 0-100
+    # gauge value like the others; JS reads it off window_switches instead.
+    _ALLOWED_BLINK_METRICS = {"cpu", "ram", "net", "window"}
+
+    def set_blink_metric(self, metric):
+        """System pet only: pick what drives how fast the pet blinks."""
+        if self._pet != "system" or metric not in self._ALLOWED_BLINK_METRICS:
+            return
+        update_config(self._pet, blink_metric=metric)
+        if self._pet_window:
+            self._pet_window.evaluate_js(f"applyBlinkMetric('{metric}')")
 
     def close_settings(self):
         try:

@@ -105,6 +105,12 @@
     <select id="graphSelect"></select>
   </div>
 
+  <!-- System pet only: what drives how fast the pet blinks. -->
+  <div class="row" id="blinkRow" hidden>
+    <span class="label">מה קובע את קצב המצמוץ</span>
+    <select id="blinkSelect"></select>
+  </div>
+
   <div class="row">
     <span class="label">כוונון עדין</span>
     <input id="margin" type="range" min="-80" max="180" value="46" />
@@ -137,6 +143,8 @@
   const gaugeRightSelect  = document.getElementById('gaugeRightSelect');
   const graphRow          = document.getElementById('graphRow');
   const graphSelect       = document.getElementById('graphSelect');
+  const blinkRow          = document.getElementById('blinkRow');
+  const blinkSelect       = document.getElementById('blinkSelect');
   const saveBtn        = document.getElementById('save');
 
   // System pet only - what each corner gauge can show instead of the fixed
@@ -164,6 +172,26 @@
   });
   graphSelect.addEventListener('change', () => {
     if (api() && api().set_graph_metric) api().set_graph_metric(graphSelect.value);
+  });
+
+  // Blink options are a separate, smaller set - not every gauge metric makes
+  // sense as a blink rate, and 'window' isn't a gauge value at all (see
+  // Api.set_blink_metric in pet_app.py). Kept in sync with
+  // Api._ALLOWED_BLINK_METRICS there.
+  const BLINK_METRICS = [
+    ['cpu', 'מעבד (CPU)'],
+    ['ram', 'זיכרון (RAM)'],
+    ['net', 'העברת נתונים (רשת)'],
+    ['window', 'החלפת חלון'],
+  ];
+  BLINK_METRICS.forEach(([value, label]) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    blinkSelect.appendChild(opt);
+  });
+  blinkSelect.addEventListener('change', () => {
+    if (api() && api().set_blink_metric) api().set_blink_metric(blinkSelect.value);
   });
 
   function api() {
@@ -196,6 +224,8 @@
     gaugeRightSelect.value = cfg.gauge_right || 'ram';
     graphRow.hidden = cfg.pet !== 'system';
     graphSelect.value = cfg.graph_metric || 'cpu';
+    blinkRow.hidden = cfg.pet !== 'system';
+    blinkSelect.value = cfg.blink_metric || 'cpu';
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.

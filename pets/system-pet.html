@@ -86,7 +86,10 @@
   #cone-hit:hover #face { transform: scale(1.08); }
 
   #blink {
-    animation: blink 4.2s ease-in-out infinite;
+    /* Duration is data-driven, not decorative - see applyBlinkMetric()/
+       updateBlinkRate() in the script below. --blink-dur defaults to the
+       original fixed pace until the first health poll lands. */
+    animation: blink var(--blink-dur, 4.2s) ease-in-out infinite;
     transform-origin: 150px 152px;
   }
   @keyframes blink {
@@ -459,12 +462,17 @@
   let leftMetric = 'cpu';
   let rightMetric = 'ram';
   let graphMetric = 'cpu';
+  let blinkMetric = 'cpu';
   function applyGaugeMetric(side, metric) {
     if (side === 'left') leftMetric = metric; else rightMetric = metric;
   }
   function applyGraphMetric(metric) {
     graphMetric = metric;
     graphHistory = []; // switching metric mid-flight would otherwise plot a mixed trace
+  }
+  function applyBlinkMetric(metric) {
+    blinkMetric = metric;
+    lastWindowSwitches = null; // re-baseline so switching INTO 'window' mid-flight can't read a stale jump
   }
 
   window.addEventListener('pywebviewready', () => {
@@ -475,6 +483,7 @@
         if (cfg.gauge_left) leftMetric = cfg.gauge_left;
         if (cfg.gauge_right) rightMetric = cfg.gauge_right;
         if (cfg.graph_metric) graphMetric = cfg.graph_metric;
+        if (cfg.blink_metric) blinkMetric = cfg.blink_metric;
       });
     }
     pollHealth();
@@ -579,6 +588,51 @@
     return kbps == null ? '--' : formatKbps(kbps) + '/s';
   }
 
+  // How fast the pet blinks - settings.html picks which live metric drives
+  // it (applyBlinkMetric()), default 'cpu'. Every metric reduces to a 0..1
+  // "excitement" level, then that level is lerped between a calm default
+  // pace and an alert one - the pet visibly speeds up under load instead of
+  // blinking on a fixed decorative timer.
+  const BLINK_CALM_S  = 4.2; // original fixed pace, kept as the 0% floor
+  const BLINK_ALERT_S = 1.1; // fastest blink, at 100% excitement
+  const blinkEl = document.getElementById('blink');
+  let lastWindowSwitches = null;
+  let windowExciteUntil = 0; // performance.now() timestamp; 'window' metric only
+
+  function blinkExcitement(h) {
+    const clamp01 = (v) => Math.max(0, Math.min(1, v));
+    switch (blinkMetric) {
+      case 'ram':
+        return clamp01((h.ram_pct || 0) / 100);
+      case 'net': {
+        const kbps = Math.max(h.net_down_kbps || 0, h.net_up_kbps || 0);
+        return clamp01(Math.log2(1 + kbps / 64) / 8); // same log curve as the arrow speed, cheap transfers barely register
+      }
+      case 'window': {
+        // Not a gauge value - a brief speed-up right when the foreground
+        // window actually changes, calm otherwise. window_switches is a
+        // running count (see pet_app.py) so a switch that happened between
+        // two polls still shows up as the number moving.
+        if (h.window_switches != null) {
+          if (lastWindowSwitches !== null && h.window_switches > lastWindowSwitches) {
+            windowExciteUntil = performance.now() + 1500;
+          }
+          lastWindowSwitches = h.window_switches;
+        }
+        return performance.now() < windowExciteUntil ? 1 : 0;
+      }
+      case 'cpu':
+      default:
+        return clamp01((h.cpu_pct || 0) / 100);
+    }
+  }
+
+  function updateBlinkRate(h) {
+    const excitement = h ? blinkExcitement(h) : 0;
+    const dur = BLINK_CALM_S - (BLINK_CALM_S - BLINK_ALERT_S) * excitement;
+    blinkEl.style.setProperty('--blink-dur', dur.toFixed(2) + 's');
+  }
+
   // Bounce speed scales with real throughput: idle traffic ambles at the
   // 2.4s CSS default, a saturated link bounces near the 0.3s floor.
   function setNetArrow(el, kbps) {
@@ -601,6 +655,7 @@
         coneRoot.classList.remove('hot');
         setNetArrow(netDown, null);
         setNetArrow(netUp, null);
+        updateBlinkRate(null);
         return;
       }
       setGauge('gaugeLeft', leftMetric, metricRaw(h, leftMetric));
@@ -609,6 +664,7 @@
       drawGraph(h);
       setNetArrow(netDown, h.net_down_kbps);
       setNetArrow(netUp, h.net_up_kbps);
+      updateBlinkRate(h);
       const hot = h.cpu_pct != null && h.cpu_pct >= HOT_CPU_PCT;
       sweat.classList.toggle('shown', hot);
       coneRoot.classList.toggle('hot', hot);
