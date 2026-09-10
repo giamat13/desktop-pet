@@ -1506,9 +1506,11 @@ def get_pet_config(pet):
         "gauge_right": cfg.get("gauge_right", "ram"),
         # Which metric the die's live history graph plots. System pet only.
         "graph_metric": cfg.get("graph_metric", "cpu"),
-        # What drives how fast the pet blinks. System pet only; default "cpu"
-        # keeps today's behavior (busier machine = more alert-looking pet).
-        "blink_metric": cfg.get("blink_metric", "cpu"),
+        # What drives how fast each eye blinks. System pet only; both default
+        # to "cpu" so they stay in sync out of the box, same as the old
+        # single shared blink.
+        "blink_metric_left": cfg.get("blink_metric_left", "cpu"),
+        "blink_metric_right": cfg.get("blink_metric_right", "cpu"),
     }
     if pet == "system":
         out["pin_metric"] = cfg.get("pin_metric", "ram")
@@ -1785,13 +1787,17 @@ class SettingsApi:
     # gauge value like the others; JS reads it off window_switches instead.
     _ALLOWED_BLINK_METRICS = {"cpu", "ram", "net", "window"}
 
-    def set_blink_metric(self, metric):
-        """System pet only: pick what drives how fast the pet blinks."""
-        if self._pet != "system" or metric not in self._ALLOWED_BLINK_METRICS:
+    def set_blink_metric(self, side, metric):
+        """
+        System pet only: pick what drives how fast one eye blinks. Left and
+        right are independent - picking the same metric for both is what
+        keeps them in sync, not a separate "synced" mode.
+        """
+        if self._pet != "system" or side not in ("left", "right") or metric not in self._ALLOWED_BLINK_METRICS:
             return
-        update_config(self._pet, blink_metric=metric)
+        update_config(self._pet, **{f"blink_metric_{side}": metric})
         if self._pet_window:
-            self._pet_window.evaluate_js(f"applyBlinkMetric('{metric}')")
+            self._pet_window.evaluate_js(f"applyBlinkMetric('{side}', '{metric}')")
 
     # "ram": each of the 8 side pins is a fixed 4GB of installed RAM.
     # "cores": each pin is 2 logical cores. Either way the pins are a

@@ -105,10 +105,14 @@
     <select id="graphSelect"></select>
   </div>
 
-  <!-- System pet only: what drives how fast the pet blinks. -->
+  <!-- System pet only: what drives how fast each eye blinks. Same metric on
+       both = synced; different metrics = each eye blinks independently. -->
   <div class="row" id="blinkRow" hidden>
-    <span class="label">מה קובע את קצב המצמוץ</span>
-    <select id="blinkSelect"></select>
+    <span class="label">מה קובע את קצב המצמוץ (עין ימין / שמאל)</span>
+    <div style="display:flex; gap:8px;">
+      <select id="blinkRightSelect"></select>
+      <select id="blinkLeftSelect"></select>
+    </div>
   </div>
 
   <!-- System pet only: what the 8 side pins represent (populated/
@@ -152,7 +156,8 @@
   const graphRow          = document.getElementById('graphRow');
   const graphSelect       = document.getElementById('graphSelect');
   const blinkRow          = document.getElementById('blinkRow');
-  const blinkSelect       = document.getElementById('blinkSelect');
+  const blinkLeftSelect   = document.getElementById('blinkLeftSelect');
+  const blinkRightSelect  = document.getElementById('blinkRightSelect');
   const pinRow            = document.getElementById('pinRow');
   const pinSelect         = document.getElementById('pinSelect');
   const pinValue          = document.getElementById('pinValue');
@@ -195,14 +200,19 @@
     ['net', 'העברת נתונים (רשת)'],
     ['window', 'החלפת חלון'],
   ];
-  BLINK_METRICS.forEach(([value, label]) => {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = label;
-    blinkSelect.appendChild(opt);
+  [blinkLeftSelect, blinkRightSelect].forEach((sel) => {
+    BLINK_METRICS.forEach(([value, label]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      sel.appendChild(opt);
+    });
   });
-  blinkSelect.addEventListener('change', () => {
-    if (api() && api().set_blink_metric) api().set_blink_metric(blinkSelect.value);
+  blinkLeftSelect.addEventListener('change', () => {
+    if (api() && api().set_blink_metric) api().set_blink_metric('left', blinkLeftSelect.value);
+  });
+  blinkRightSelect.addEventListener('change', () => {
+    if (api() && api().set_blink_metric) api().set_blink_metric('right', blinkRightSelect.value);
   });
 
   // Pins: fixed hardware spec, not a live gauge - see Api.set_pin_metric /
@@ -274,7 +284,8 @@
     graphRow.hidden = cfg.pet !== 'system';
     graphSelect.value = cfg.graph_metric || 'cpu';
     blinkRow.hidden = cfg.pet !== 'system';
-    blinkSelect.value = cfg.blink_metric || 'cpu';
+    blinkLeftSelect.value = cfg.blink_metric_left || 'cpu';
+    blinkRightSelect.value = cfg.blink_metric_right || 'cpu';
     pinRow.hidden = cfg.pet !== 'system';
     pinSelect.value = cfg.pin_metric || 'ram';
     currentSpecs = { ram_total_gb: cfg.ram_total_gb, cpu_cores: cfg.cpu_cores };

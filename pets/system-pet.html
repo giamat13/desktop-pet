@@ -85,12 +85,14 @@
   #face { transition: transform 0.3s ease; transform-origin: 150px 152px; }
   #cone-hit:hover #face { transform: scale(1.08); }
 
-  #blink {
+  .blinkEye {
     /* Duration is data-driven, not decorative - see applyBlinkMetric()/
-       updateBlinkRate() in the script below. --blink-dur defaults to the
-       original fixed pace until the first health poll lands. */
+       updateBlinkRates() in the script below. Each eye keeps its own
+       --blink-dur (set directly on #blinkL / #blinkR), so left and right
+       can run at different paces when they're on different metrics.
+       --blink-dur defaults to the original fixed pace until the first
+       health poll lands. transform-origin is set inline per eye above. */
     animation: blink var(--blink-dur, 4.2s) ease-in-out infinite;
-    transform-origin: 150px 152px;
   }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
@@ -365,10 +367,15 @@
             stroke="#0E1519" stroke-width="3.5"/>
 
       <g id="face">
-        <g id="blink">
+        <!-- Each eye blinks on its own group/origin now - independent left/
+             right blink metrics (applyBlinkMetric(side, metric)) need
+             separate transforms, not one shared scaleY over both eyes. -->
+        <g id="blinkL" class="blinkEye" style="transform-origin: 126px 152px;">
           <rect x="116" y="145" width="20" height="14" rx="4" fill="#9FFFE4"/>
-          <rect x="164" y="145" width="20" height="14" rx="4" fill="#9FFFE4"/>
           <circle id="glint" cx="122" cy="149" r="2.2" fill="#FFFFFF"/>
+        </g>
+        <g id="blinkR" class="blinkEye" style="transform-origin: 174px 152px;">
+          <rect x="164" y="145" width="20" height="14" rx="4" fill="#9FFFE4"/>
           <circle cx="170" cy="149" r="2" fill="#FFFFFF" opacity="0.9"/>
         </g>
 
@@ -457,7 +464,8 @@
   let leftMetric = 'cpu';
   let rightMetric = 'ram';
   let graphMetric = 'cpu';
-  let blinkMetric = 'cpu';
+  let blinkMetricL = 'cpu';
+  let blinkMetricR = 'cpu';
   function applyGaugeMetric(side, metric) {
     if (side === 'left') leftMetric = metric; else rightMetric = metric;
   }
@@ -465,9 +473,14 @@
     graphMetric = metric;
     graphHistory = []; // switching metric mid-flight would otherwise plot a mixed trace
   }
-  function applyBlinkMetric(metric) {
-    blinkMetric = metric;
-    lastWindowSwitches = null; // re-baseline so switching INTO 'window' mid-flight can't read a stale jump
+  function applyBlinkMetric(side, metric) {
+    if (side === 'left') {
+      blinkMetricL = metric;
+      windowStateL.lastSwitches = null; // re-baseline so switching INTO 'window' mid-flight can't read a stale jump
+    } else {
+      blinkMetricR = metric;
+      windowStateR.lastSwitches = null;
+    }
   }
 
   // Pins: a populated-socket motif over a fixed hardware spec, not a live
@@ -544,7 +557,8 @@
         if (cfg.gauge_left) leftMetric = cfg.gauge_left;
         if (cfg.gauge_right) rightMetric = cfg.gauge_right;
         if (cfg.graph_metric) graphMetric = cfg.graph_metric;
-        if (cfg.blink_metric) blinkMetric = cfg.blink_metric;
+        if (cfg.blink_metric_left) blinkMetricL = cfg.blink_metric_left;
+        if (cfg.blink_metric_right) blinkMetricR = cfg.blink_metric_right;
         if (cfg.pin_metric) pinMetric = cfg.pin_metric;
         if (cfg.ram_total_gb != null) ramTotalGb = cfg.ram_total_gb;
         if (cfg.cpu_cores != null) cpuCores = cfg.cpu_cores;
@@ -653,20 +667,26 @@
     return kbps == null ? '--' : formatKbps(kbps) + '/s';
   }
 
-  // How fast the pet blinks - settings.html picks which live metric drives
-  // it (applyBlinkMetric()), default 'cpu'. Every metric reduces to a 0..1
-  // "excitement" level, then that level is lerped between a calm default
-  // pace and an alert one - the pet visibly speeds up under load instead of
-  // blinking on a fixed decorative timer.
+  // How fast each eye blinks - settings.html picks which live metric drives
+  // each one independently (applyBlinkMetric(side, metric)), default 'cpu'
+  // for both (so they stay in sync out of the box, same as the old shared
+  // blink). Every metric reduces to a 0..1 "excitement" level, then that
+  // level is lerped between a calm default pace and an alert one.
   const BLINK_CALM_S  = 4.2; // original fixed pace, kept as the 0% floor
   const BLINK_ALERT_S = 1.1; // fastest blink, at 100% excitement
-  const blinkEl = document.getElementById('blink');
-  let lastWindowSwitches = null;
-  let windowExciteUntil = 0; // performance.now() timestamp; 'window' metric only
+  const blinkElL = document.getElementById('blinkL');
+  const blinkElR = document.getElementById('blinkR');
+  // 'window' state is tracked per side (not shared) so each eye's excite
+  // window is independent even though both read the same window_switches
+  // counter - when both sides use 'window' they see the same counter move
+  // at the same poll and so land back in sync naturally, same as any other
+  // metric picked for both sides.
+  const windowStateL = { lastSwitches: null, exciteUntil: 0 };
+  const windowStateR = { lastSwitches: null, exciteUntil: 0 };
 
-  function blinkExcitement(h) {
+  function blinkExcitement(h, metric, state) {
     const clamp01 = (v) => Math.max(0, Math.min(1, v));
-    switch (blinkMetric) {
+    switch (metric) {
       case 'ram':
         return clamp01((h.ram_pct || 0) / 100);
       case 'net': {
@@ -679,12 +699,12 @@
         // running count (see pet_app.py) so a switch that happened between
         // two polls still shows up as the number moving.
         if (h.window_switches != null) {
-          if (lastWindowSwitches !== null && h.window_switches > lastWindowSwitches) {
-            windowExciteUntil = performance.now() + 1500;
+          if (state.lastSwitches !== null && h.window_switches > state.lastSwitches) {
+            state.exciteUntil = performance.now() + 1500;
           }
-          lastWindowSwitches = h.window_switches;
+          state.lastSwitches = h.window_switches;
         }
-        return performance.now() < windowExciteUntil ? 1 : 0;
+        return performance.now() < state.exciteUntil ? 1 : 0;
       }
       case 'cpu':
       default:
@@ -692,10 +712,11 @@
     }
   }
 
-  function updateBlinkRate(h) {
-    const excitement = h ? blinkExcitement(h) : 0;
-    const dur = BLINK_CALM_S - (BLINK_CALM_S - BLINK_ALERT_S) * excitement;
-    blinkEl.style.setProperty('--blink-dur', dur.toFixed(2) + 's');
+  function updateBlinkRates(h) {
+    const excL = h ? blinkExcitement(h, blinkMetricL, windowStateL) : 0;
+    const excR = h ? blinkExcitement(h, blinkMetricR, windowStateR) : 0;
+    blinkElL.style.setProperty('--blink-dur', (BLINK_CALM_S - (BLINK_CALM_S - BLINK_ALERT_S) * excL).toFixed(2) + 's');
+    blinkElR.style.setProperty('--blink-dur', (BLINK_CALM_S - (BLINK_CALM_S - BLINK_ALERT_S) * excR).toFixed(2) + 's');
   }
 
   // Bounce speed scales with real throughput: idle traffic ambles at the
@@ -720,7 +741,7 @@
         coneRoot.classList.remove('hot');
         setNetArrow(netDown, null);
         setNetArrow(netUp, null);
-        updateBlinkRate(null);
+        updateBlinkRates(null);
         return;
       }
       setGauge('gaugeLeft', leftMetric, metricRaw(h, leftMetric));
@@ -729,7 +750,7 @@
       drawGraph(h);
       setNetArrow(netDown, h.net_down_kbps);
       setNetArrow(netUp, h.net_up_kbps);
-      updateBlinkRate(h);
+      updateBlinkRates(h);
       const hot = h.cpu_pct != null && h.cpu_pct >= HOT_CPU_PCT;
       sweat.classList.toggle('shown', hot);
       coneRoot.classList.toggle('hot', hot);
