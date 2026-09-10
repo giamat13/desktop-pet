@@ -92,10 +92,6 @@
     animation: blink var(--blink-dur, 4.2s) ease-in-out infinite;
     transform-origin: 150px 152px;
   }
-
-  /* Pins double as a populated/unpopulated-socket readout of a fixed
-     hardware spec - see updatePins() below. */
-  [id^="pinL"], [id^="pinR"] { transition: opacity 0.3s ease; }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
     95%           { transform: scaleY(0.05); }
@@ -338,19 +334,12 @@
     <rect x="30" y="0" width="240" height="400" fill="transparent"/>
     <g id="cone-hover">
 
-      <!-- side pins: also a populated/unpopulated-socket readout of a fixed
-           hardware spec (RAM or cores) - see applyPinMetric()/updatePins()
-           below. Left = pinL1..4 top-to-bottom, right = pinR1..4. -->
-      <g fill="url(#pinGrad)" stroke="#0E1519" stroke-width="2.5">
-        <rect id="pinL1" x="60" y="128" width="24" height="11" rx="4"/>
-        <rect id="pinL2" x="60" y="152" width="24" height="11" rx="4"/>
-        <rect id="pinL3" x="60" y="176" width="24" height="11" rx="4"/>
-        <rect id="pinL4" x="60" y="200" width="24" height="11" rx="4"/>
-        <rect id="pinR1" x="216" y="128" width="24" height="11" rx="4"/>
-        <rect id="pinR2" x="216" y="152" width="24" height="11" rx="4"/>
-        <rect id="pinR3" x="216" y="176" width="24" height="11" rx="4"/>
-        <rect id="pinR4" x="216" y="200" width="24" height="11" rx="4"/>
-      </g>
+      <!-- side pins: dynamically rendered by renderPins() below, not static
+           markup - count and spacing depend on the fixed hardware spec
+           (RAM/cores) chosen in settings, so the two <g> containers start
+           empty and get populated once get_pet_config() reports the specs. -->
+      <g id="pinsL" fill="url(#pinGrad)" stroke="#0E1519" stroke-width="2.5"></g>
+      <g id="pinsR" fill="url(#pinGrad)" stroke="#0E1519" stroke-width="2.5"></g>
 
       <!-- front pins double as the pet's legs: the motif supplies its own feet
            instead of tucking generic rounded rects under a tile -->
@@ -481,36 +470,70 @@
     lastWindowSwitches = null; // re-baseline so switching INTO 'window' mid-flight can't read a stale jump
   }
 
-  // Pins: a populated/unpopulated-socket motif over a fixed hardware spec,
-  // not a live gauge - ramTotalGb/cpuCores are read once at startup
-  // (get_pet_config, system pet only) since they never change while the pet
-  // runs. 4GB per pin under 'ram', 2 logical cores per pin under 'cores'.
+  // Pins: a populated-socket motif over a fixed hardware spec, not a live
+  // gauge - ramTotalGb/cpuCores are read once at startup (get_pet_config,
+  // system pet only) since they never change while the pet runs. 4GB per pin
+  // under 'ram', 2 logical cores per pin under 'cores'. The pin count itself
+  // (not a fixed 8 with some dimmed) scales with the spec - a 64GB machine
+  // gets 8 per side - and each side's pins are laid out centered in the
+  // body's pin band rather than pinned to the top.
   let pinMetric = 'ram';
   let ramTotalGb = null;
   let cpuCores = null;
 
-  function computeLitPins() {
+  const PIN_X_L = 60, PIN_X_R = 216, PIN_W = 24, PIN_H = 11;
+  const PIN_MAX_PITCH = 24;      // spacing used whenever this many pins fit at the original pitch
+  const PIN_AREA_TOP = 114, PIN_AREA_BOTTOM = 220; // vertical band pins center within (inside the body's left/right edge)
+  const PIN_MAX_PER_SIDE = 8;    // 64GB / 4GB-per-pin -> 8 per side, the example this was sized for
+
+  function computePinTotal() {
     const raw = pinMetric === 'cores'
       ? (cpuCores != null ? cpuCores / 2 : null)
       : (ramTotalGb != null ? ramTotalGb / 4 : null);
-    // Spec unknown (psutil missing): leave every pin lit rather than
-    // guessing a count that would misrepresent the machine.
-    return raw == null ? 8 : Math.max(0, Math.min(8, Math.round(raw)));
+    // Spec unknown (psutil missing): fall back to the original 4-per-side look.
+    if (raw == null) return 8;
+    return Math.max(2, Math.min(PIN_MAX_PER_SIDE * 2, Math.round(raw)));
   }
 
-  function updatePins() {
-    const lit = computeLitPins();
-    const litLeft = Math.ceil(lit / 2);   // odd totals give the left side the extra pin
-    const litRight = Math.floor(lit / 2);
-    for (let i = 1; i <= 4; i++) {
-      document.getElementById('pinL' + i).style.opacity = i <= litLeft ? '1' : '0.22';
-      document.getElementById('pinR' + i).style.opacity = i <= litRight ? '1' : '0.22';
-    }
+  // Pin y-positions for one side, centered in PIN_AREA_TOP..BOTTOM. Spacing
+  // shrinks below PIN_MAX_PITCH only once more pins need to fit than the
+  // original design (4 per side) allowed for.
+  function layoutPinYs(n) {
+    if (n <= 0) return [];
+    const room = PIN_AREA_BOTTOM - PIN_AREA_TOP;
+    const pitch = n > 1 ? Math.min(PIN_MAX_PITCH, (room - PIN_H) / (n - 1)) : 0;
+    const groupH = pitch * (n - 1) + PIN_H;
+    const startY = PIN_AREA_TOP + (room - groupH) / 2;
+    const ys = [];
+    for (let i = 0; i < n; i++) ys.push(startY + pitch * i);
+    return ys;
+  }
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  function fillPinGroup(group, x, ys) {
+    group.textContent = ''; // clears prior render before re-laying-out
+    ys.forEach((y) => {
+      const r = document.createElementNS(SVG_NS, 'rect');
+      r.setAttribute('x', x);
+      r.setAttribute('y', y.toFixed(1));
+      r.setAttribute('width', PIN_W);
+      r.setAttribute('height', PIN_H);
+      r.setAttribute('rx', 4);
+      group.appendChild(r);
+    });
+  }
+
+  function renderPins() {
+    const total = computePinTotal();
+    const left = Math.ceil(total / 2);   // odd totals give the left side the extra pin
+    const right = Math.floor(total / 2);
+    fillPinGroup(document.getElementById('pinsL'), PIN_X_L, layoutPinYs(left));
+    fillPinGroup(document.getElementById('pinsR'), PIN_X_R, layoutPinYs(right));
   }
 
   function applyPinMetric(metric) {
     pinMetric = metric;
-    updatePins();
+    renderPins();
   }
 
   window.addEventListener('pywebviewready', () => {
@@ -525,7 +548,7 @@
         if (cfg.pin_metric) pinMetric = cfg.pin_metric;
         if (cfg.ram_total_gb != null) ramTotalGb = cfg.ram_total_gb;
         if (cfg.cpu_cores != null) cpuCores = cfg.cpu_cores;
-        updatePins();
+        renderPins();
       });
     }
     pollHealth();

@@ -224,14 +224,21 @@
   });
 
   let currentSpecs = { ram_total_gb: null, cpu_cores: null };
+  // Mirrors computePinTotal() in system-pet.html: 4GB or 2 cores per pin,
+  // clamped to 2..16 total (8 per side max - the spec this was sized for).
+  function pinTotalFor(spec, unit) {
+    return spec == null ? null : Math.max(2, Math.min(16, Math.round(spec / unit)));
+  }
   function updatePinValue() {
     if (pinSelect.value === 'cores') {
+      const total = pinTotalFor(currentSpecs.cpu_cores, 2);
       pinValue.textContent = currentSpecs.cpu_cores != null
-        ? `${currentSpecs.cpu_cores} ליבות → ${Math.min(8, Math.round(currentSpecs.cpu_cores / 2))} פינים דולקים`
+        ? `${currentSpecs.cpu_cores} ליבות → ${total} פינים (${Math.ceil(total / 2)}/${Math.floor(total / 2)})`
         : '';
     } else {
+      const total = pinTotalFor(currentSpecs.ram_total_gb, 4);
       pinValue.textContent = currentSpecs.ram_total_gb != null
-        ? `${currentSpecs.ram_total_gb}GB → ${Math.min(8, Math.round(currentSpecs.ram_total_gb / 4))} פינים דולקים`
+        ? `${currentSpecs.ram_total_gb}GB → ${total} פינים (${Math.ceil(total / 2)}/${Math.floor(total / 2)})`
         : '';
     }
   }
