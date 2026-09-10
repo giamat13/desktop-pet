@@ -1466,10 +1466,28 @@ def run_boost():
         log("run_boost failed:", exc)
 
 
+def read_hardware_specs():
+    """
+    Static specs for the pin motif: total RAM in whole GB, and logical CPU
+    core count. Read once via psutil, not through the 1Hz health sampler -
+    unlike cpu_pct/ram_pct these don't change while the pet runs, so there is
+    nothing to poll. Returns (None, None) if psutil is unavailable, same
+    fail-quiet convention as read_system_health().
+    """
+    try:
+        import psutil
+        ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
+        cores = psutil.cpu_count(logical=True)
+        return ram_gb, cores
+    except Exception as exc:
+        log("read_hardware_specs failed:", exc)
+        return None, None
+
+
 def get_pet_config(pet):
     """Everything the pet / settings pages need to render themselves."""
     cfg = load_config(pet)
-    return {
+    out = {
         "pet": pet,  # settings.html shows the Claude-only controls off this
         "margin": get_margin(pet),
         "size": cfg.get("size", 100),
@@ -1492,6 +1510,15 @@ def get_pet_config(pet):
         # keeps today's behavior (busier machine = more alert-looking pet).
         "blink_metric": cfg.get("blink_metric", "cpu"),
     }
+    if pet == "system":
+        out["pin_metric"] = cfg.get("pin_metric", "ram")
+        # Static hardware specs, read once - the pins are a populated/
+        # unpopulated-socket motif (each pin = one fixed unit of capacity),
+        # not a live gauge, so the pet only needs these at load, not per poll.
+        ram_gb, cores = read_hardware_specs()
+        out["ram_total_gb"] = ram_gb
+        out["cpu_cores"] = cores
+    return out
 
 
 class Api:
@@ -1765,6 +1792,19 @@ class SettingsApi:
         update_config(self._pet, blink_metric=metric)
         if self._pet_window:
             self._pet_window.evaluate_js(f"applyBlinkMetric('{metric}')")
+
+    # "ram": each of the 8 side pins is a fixed 4GB of installed RAM.
+    # "cores": each pin is 2 logical cores. Either way the pins are a
+    # populated/unpopulated-socket readout of a STATIC spec, not a live gauge.
+    _ALLOWED_PIN_METRICS = {"ram", "cores"}
+
+    def set_pin_metric(self, metric):
+        """System pet only: pick what the 8 side pins represent."""
+        if self._pet != "system" or metric not in self._ALLOWED_PIN_METRICS:
+            return
+        update_config(self._pet, pin_metric=metric)
+        if self._pet_window:
+            self._pet_window.evaluate_js(f"applyPinMetric('{metric}')")
 
     def close_settings(self):
         try:

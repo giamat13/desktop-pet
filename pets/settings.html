@@ -111,6 +111,14 @@
     <select id="blinkSelect"></select>
   </div>
 
+  <!-- System pet only: what the 8 side pins represent (populated/
+       unpopulated-socket readout of RAM or CPU cores). -->
+  <div class="row" id="pinRow" hidden>
+    <span class="label">מה מייצגים הפינים בצד</span>
+    <select id="pinSelect"></select>
+    <span class="value" id="pinValue"></span>
+  </div>
+
   <div class="row">
     <span class="label">כוונון עדין</span>
     <input id="margin" type="range" min="-80" max="180" value="46" />
@@ -145,6 +153,9 @@
   const graphSelect       = document.getElementById('graphSelect');
   const blinkRow          = document.getElementById('blinkRow');
   const blinkSelect       = document.getElementById('blinkSelect');
+  const pinRow            = document.getElementById('pinRow');
+  const pinSelect         = document.getElementById('pinSelect');
+  const pinValue          = document.getElementById('pinValue');
   const saveBtn        = document.getElementById('save');
 
   // System pet only - what each corner gauge can show instead of the fixed
@@ -194,6 +205,37 @@
     if (api() && api().set_blink_metric) api().set_blink_metric(blinkSelect.value);
   });
 
+  // Pins: fixed hardware spec, not a live gauge - see Api.set_pin_metric /
+  // read_hardware_specs in pet_app.py. Kept in sync with
+  // Api._ALLOWED_PIN_METRICS there.
+  const PIN_METRICS = [
+    ['ram', 'זיכרון (4GB לפין)'],
+    ['cores', 'ליבות מעבד (2 לפין)'],
+  ];
+  PIN_METRICS.forEach(([value, label]) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    pinSelect.appendChild(opt);
+  });
+  pinSelect.addEventListener('change', () => {
+    if (api() && api().set_pin_metric) api().set_pin_metric(pinSelect.value);
+    updatePinValue();
+  });
+
+  let currentSpecs = { ram_total_gb: null, cpu_cores: null };
+  function updatePinValue() {
+    if (pinSelect.value === 'cores') {
+      pinValue.textContent = currentSpecs.cpu_cores != null
+        ? `${currentSpecs.cpu_cores} ליבות → ${Math.min(8, Math.round(currentSpecs.cpu_cores / 2))} פינים דולקים`
+        : '';
+    } else {
+      pinValue.textContent = currentSpecs.ram_total_gb != null
+        ? `${currentSpecs.ram_total_gb}GB → ${Math.min(8, Math.round(currentSpecs.ram_total_gb / 4))} פינים דולקים`
+        : '';
+    }
+  }
+
   function api() {
     return (window.pywebview && window.pywebview.api) || null;
   }
@@ -226,6 +268,10 @@
     graphSelect.value = cfg.graph_metric || 'cpu';
     blinkRow.hidden = cfg.pet !== 'system';
     blinkSelect.value = cfg.blink_metric || 'cpu';
+    pinRow.hidden = cfg.pet !== 'system';
+    pinSelect.value = cfg.pin_metric || 'ram';
+    currentSpecs = { ram_total_gb: cfg.ram_total_gb, cpu_cores: cfg.cpu_cores };
+    updatePinValue();
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.
