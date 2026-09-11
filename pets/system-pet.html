@@ -211,6 +211,13 @@
     text-shadow: 0 0 3px #0E1519, 0 0 3px #0E1519;
     white-space: nowrap;
   }
+  /* Pins in use right now (updatePinUsage()): brass swaps for the same lit
+     teal as the die, so a "populated socket" reads as "live" the same way
+     the screen does, not just a brighter brass. */
+  #pinsL rect.pin-lit, #pinsR rect.pin-lit {
+    fill: url(#dieGrad);
+    filter: drop-shadow(0 0 3px #2FB8A2);
+  }
 
   /* battery: an actual battery outline with a fill level, in the same brass as
      the chip's pins, rather than a floating text pill */
@@ -525,6 +532,7 @@
   const SVG_NS = 'http://www.w3.org/2000/svg';
   function fillPinGroup(group, x, ys) {
     group.textContent = ''; // clears prior render before re-laying-out
+    const rects = [];
     ys.forEach((y) => {
       const r = document.createElementNS(SVG_NS, 'rect');
       r.setAttribute('x', x);
@@ -533,20 +541,41 @@
       r.setAttribute('height', PIN_H);
       r.setAttribute('rx', 4);
       group.appendChild(r);
+      rects.push(r);
     });
+    return rects;
   }
+
+  // Every pin rect, in one flat list (left top-to-bottom, then right
+  // top-to-bottom) - the order updatePinUsage() lights through.
+  let allPinRects = [];
 
   function renderPins() {
     const total = computePinTotal();
     const left = Math.ceil(total / 2);   // odd totals give the left side the extra pin
     const right = Math.floor(total / 2);
-    fillPinGroup(document.getElementById('pinsL'), PIN_X_L, layoutPinYs(left));
-    fillPinGroup(document.getElementById('pinsR'), PIN_X_R, layoutPinYs(right));
+    const leftRects = fillPinGroup(document.getElementById('pinsL'), PIN_X_L, layoutPinYs(left));
+    const rightRects = fillPinGroup(document.getElementById('pinsR'), PIN_X_R, layoutPinYs(right));
+    allPinRects = leftRects.concat(rightRects);
+    lastPinPct = null; // force a re-light against the new pin count
   }
 
   function applyPinMetric(metric) {
     pinMetric = metric;
     renderPins();
+  }
+
+  // Pins double as a usage meter: the fraction of pins "electrified" tracks
+  // how much of the spec they represent is actually in use right now (RAM%
+  // under 'ram', CPU% under 'cores') - not a live value each pin carries,
+  // just how many of the fixed sockets are lit.
+  let lastPinPct = null;
+  function updatePinUsage(h) {
+    const pct = h ? Math.max(0, Math.min(100, (pinMetric === 'cores' ? h.cpu_pct : h.ram_pct) || 0)) : 0;
+    if (pct === lastPinPct) return;
+    lastPinPct = pct;
+    const lit = Math.round(allPinRects.length * pct / 100);
+    allPinRects.forEach((r, i) => r.classList.toggle('pin-lit', i < lit));
   }
 
   window.addEventListener('pywebviewready', () => {
@@ -562,6 +591,7 @@
         if (cfg.pin_metric) pinMetric = cfg.pin_metric;
         if (cfg.ram_total_gb != null) ramTotalGb = cfg.ram_total_gb;
         if (cfg.cpu_cores != null) cpuCores = cfg.cpu_cores;
+        if (cfg.speed_unit) speedUnit = cfg.speed_unit;
         renderPins();
       });
     }
@@ -603,8 +633,17 @@
     }
   }
 
+  // 'MB' (default): kbps is already KB/s as sampled from bytes. 'Mb': ×8 to
+  // read in bits, matching how ISPs advertise connection speed.
+  let speedUnit = 'MB';
+  function applySpeedUnit(unit) {
+    speedUnit = unit;
+  }
   function formatKbps(kbps) {
-    return kbps >= 1024 ? (kbps / 1024).toFixed(1) + 'M' : Math.round(kbps) + 'K';
+    const v = speedUnit === 'Mb' ? kbps * 8 : kbps;
+    const big = speedUnit === 'Mb' ? 'Mb' : 'MB';
+    const small = speedUnit === 'Mb' ? 'Kb' : 'KB';
+    return v >= 1024 ? (v / 1024).toFixed(1) + big : Math.round(v) + small;
   }
 
   function formatMetric(key, raw) {
@@ -742,6 +781,7 @@
         setNetArrow(netDown, null);
         setNetArrow(netUp, null);
         updateBlinkRates(null);
+        updatePinUsage(null);
         return;
       }
       setGauge('gaugeLeft', leftMetric, metricRaw(h, leftMetric));
@@ -751,6 +791,7 @@
       setNetArrow(netDown, h.net_down_kbps);
       setNetArrow(netUp, h.net_up_kbps);
       updateBlinkRates(h);
+      updatePinUsage(h);
       const hot = h.cpu_pct != null && h.cpu_pct >= HOT_CPU_PCT;
       sweat.classList.toggle('shown', hot);
       coneRoot.classList.toggle('hot', hot);

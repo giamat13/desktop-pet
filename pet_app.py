@@ -1511,6 +1511,9 @@ def get_pet_config(pet):
         # single shared blink.
         "blink_metric_left": cfg.get("blink_metric_left", "cpu"),
         "blink_metric_right": cfg.get("blink_metric_right", "cpu"),
+        # Whether the net arrows read in bytes (MB/s, the raw sampled unit)
+        # or bits (Mb/s, ×8 - what ISPs advertise). System pet only.
+        "speed_unit": cfg.get("speed_unit", "MB"),
     }
     if pet == "system":
         out["pin_metric"] = cfg.get("pin_metric", "ram")
@@ -1811,6 +1814,18 @@ class SettingsApi:
         update_config(self._pet, pin_metric=metric)
         if self._pet_window:
             self._pet_window.evaluate_js(f"applyPinMetric('{metric}')")
+
+    # "MB": bytes as sampled (net_down_kbps/net_up_kbps are already KB/s).
+    # "Mb": bits, ×8 - matches how ISPs advertise connection speed.
+    _ALLOWED_SPEED_UNITS = {"MB", "Mb"}
+
+    def set_speed_unit(self, unit):
+        """System pet only: MB/s vs Mb/s for the net arrow labels."""
+        if self._pet != "system" or unit not in self._ALLOWED_SPEED_UNITS:
+            return
+        update_config(self._pet, speed_unit=unit)
+        if self._pet_window:
+            self._pet_window.evaluate_js(f"applySpeedUnit('{unit}')")
 
     def close_settings(self):
         try:

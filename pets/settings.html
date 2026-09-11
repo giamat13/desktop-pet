@@ -123,6 +123,15 @@
     <span class="value" id="pinValue"></span>
   </div>
 
+  <!-- System pet only: unit for the net down/up arrow labels. -->
+  <div class="row" id="speedRow" hidden>
+    <span class="label">יחידת מהירות הרשת</span>
+    <div class="modes" id="speedModes">
+      <button data-speed="MB">MB (בייטים)</button>
+      <button data-speed="Mb">Mb (סיביות)</button>
+    </div>
+  </div>
+
   <div class="row">
     <span class="label">כוונון עדין</span>
     <input id="margin" type="range" min="-80" max="180" value="46" />
@@ -161,6 +170,8 @@
   const pinRow            = document.getElementById('pinRow');
   const pinSelect         = document.getElementById('pinSelect');
   const pinValue          = document.getElementById('pinValue');
+  const speedRow          = document.getElementById('speedRow');
+  const speedButtons      = [...document.querySelectorAll('#speedModes button')];
   const saveBtn        = document.getElementById('save');
 
   // System pet only - what each corner gauge can show instead of the fixed
@@ -233,6 +244,14 @@
     updatePinValue();
   });
 
+  function setSpeedUnit(unit) {
+    speedButtons.forEach(b => b.classList.toggle('active', b.dataset.speed === unit));
+  }
+  speedButtons.forEach(b => b.addEventListener('click', () => {
+    setSpeedUnit(b.dataset.speed);
+    if (api() && api().set_speed_unit) api().set_speed_unit(b.dataset.speed);
+  }));
+
   let currentSpecs = { ram_total_gb: null, cpu_cores: null };
   // Mirrors computePinTotal() in system-pet.html: 4GB or 2 cores per pin,
   // clamped to 2..16 total (8 per side max - the spec this was sized for).
@@ -290,6 +309,8 @@
     pinSelect.value = cfg.pin_metric || 'ram';
     currentSpecs = { ram_total_gb: cfg.ram_total_gb, cpu_cores: cfg.cpu_cores };
     updatePinValue();
+    speedRow.hidden = cfg.pet !== 'system';
+    setSpeedUnit(cfg.speed_unit || 'MB');
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.
