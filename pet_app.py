@@ -63,6 +63,12 @@ ACTIVITY_STALE_SECS = 20
 # this old, so the read path sweeps them - no scheduled task for 200 bytes.
 ACTIVITY_KEEP_SECS = 6 * 60 * 60
 
+# Populated by main() as each pet window is created: {pet_key: window}. Lets
+# one shared settings window reach into ANY pet (list them, toggle them,
+# "enter" their settings) instead of only the pet that opened it - see
+# SettingsApi.list_pets/set_hidden_for/switch_pet below.
+_pet_windows = {}
+
 
 def log(*args):
     """
@@ -1663,6 +1669,11 @@ def get_pet_config(pet):
         # shown at all. On by default; settings.html lets a user hide them.
         # System pet only.
         "show_disk_arrows": cfg.get("show_disk_arrows", True),
+        # Whether this pet's window is hidden entirely. Every pet gets this -
+        # unlike the toggles above it isn't gated to one pet type. Off by
+        # default (the pet shows); persisted so a hidden pet stays hidden
+        # across restarts (see main()'s create_window(hidden=...)).
+        "hidden": cfg.get("hidden", False),
     }
     if pet == "system":
         out["pin_metric"] = cfg.get("pin_metric", "ram")
@@ -1706,12 +1717,26 @@ class Api:
         """
         return get_pet_config(self._pet)
 
+    def _hidden(self):
+        """
+        Whether this pet is currently hidden (SettingsApi.set_hidden /
+        set_hidden_for). The getters below are polled by the page on plain
+        JS timers that keep firing on a hidden window, so they short-circuit
+        here instead of doing real work (psutil, subprocess, file reads) for
+        a pet nobody can see.
+        """
+        return bool(load_config(self._pet).get("hidden", False))
+
     def get_usage(self):
         """Polled from JS on a timer to drive the live/weekly usage gauges."""
+        if self._hidden():
+            return None
         return read_usage()
 
     def get_activity(self):
         """Polled from JS on a short timer to drive the activity badge."""
+        if self._hidden():
+            return None
         return read_activity()
 
     def get_media(self):
@@ -1719,28 +1744,28 @@ class Api:
         Polled from JS to drive the VLC / Spotify progress bars. None for
         every other pet, so one shared media-bar snippet can live in any page.
         """
-        if self._pet not in ("vlc", "spotify"):
+        if self._pet not in ("vlc", "spotify") or self._hidden():
             return None
         return read_media(self._pet)
 
     def get_vscode_dirty(self):
         """Polled from JS to drive the unsaved-changes indicator. None for
         every other pet, same gating as get_media()."""
-        if self._pet != "vscode":
+        if self._pet != "vscode" or self._hidden():
             return None
         return read_vscode_dirty()
 
     def get_discord_voice(self):
         """Polled from JS to drive the "in a call" indicator. None for every
         other pet, same gating as get_media()."""
-        if self._pet != "discord":
+        if self._pet != "discord" or self._hidden():
             return None
         return read_discord_voice_state()
 
     def get_system_health(self):
         """Polled from JS to drive the CPU/RAM/battery gauges. None for
         every other pet, same gating as get_media()."""
-        if self._pet != "system":
+        if self._pet != "system" or self._hidden():
             return None
         return read_system_health()
 
@@ -1765,8 +1790,9 @@ class Api:
                 width=320,
                 # Claude gets two extra rows (multi-session mode, background
                 # refresh); both are hidden for every other pet, so their
-                # window stays short.
-                height=520 if self._pet == "claude" else (420 if self._pet == "system" else 340),
+                # window stays short. +70 across the board for the new
+                # show/hide row, which is never hidden.
+                height=590 if self._pet == "claude" else (490 if self._pet == "system" else 410),
                 on_top=True,
                 resizable=False,
                 js_api=sapi,
@@ -2013,12 +2039,102 @@ class SettingsApi:
         if self._pet_window:
             self._pet_window.evaluate_js(f"applyShowDiskArrows({'true' if on else 'false'})")
 
+    def set_hidden(self, on):
+        """
+        Show/hide this pet's window entirely. Persisted per-pet, same as
+        position/size, and pushed live to the actual window - unlike the
+        JS-side toggles above (size, arrows, ...) this one has nothing to
+        push to the page, since a hidden window isn't rendering anyway.
+        """
+        try:
+            on = bool(on)
+            update_config(self._pet, hidden=on)
+            if self._pet_window:
+                if on:
+                    self._pet_window.hide()
+                else:
+                    self._pet_window.show()
+        except Exception as exc:
+            log("set_hidden failed:", exc)
+
     def close_settings(self):
         try:
             if self._window:
                 self._window.destroy()
         except Exception as exc:
             log("close_settings failed:", exc)
+
+    # Hebrew labels for every pet key - shared by list_pets() below so the
+    # "other pets" list in settings.html doesn't have to duplicate PETS.
+    _PET_LABELS = {
+        "claude": "קלוד", "vlc": "VLC", "vscode": "VS Code",
+        "curseforge": "CurseForge", "chrome": "כרום", "spotify": "ספוטיפיי",
+        "discord": "דיסקורד", "system": "מערכת",
+    }
+
+    def list_pets(self):
+        """
+        Every OTHER pet (key/label/hidden), for the list settings.html shows
+        under the close button. Reads straight off disk rather than through
+        _pet_windows, so it works even for a pet whose window was never
+        created this run (e.g. app launched for a single pet).
+        """
+        try:
+            return [
+                {"key": key, "label": self._PET_LABELS.get(key, key),
+                 "hidden": bool(load_config(key).get("hidden", False))}
+                for key in PETS if key != self._pet
+            ]
+        except Exception as exc:
+            log("list_pets failed:", exc)
+            return []
+
+    def set_hidden_for(self, pet_key, on):
+        """
+        Show/hide an arbitrary pet from the "other pets" list, without
+        switching this settings window's own context - same effect as
+        set_hidden(), just addressed by key instead of self._pet/_pet_window.
+        Returns the new state so the list row can re-sync its label.
+        """
+        try:
+            if pet_key not in PETS:
+                return None
+            on = bool(on)
+            update_config(pet_key, hidden=on)
+            window = _pet_windows.get(pet_key)
+            if window:
+                window.hide() if on else window.show()
+            return on
+        except Exception as exc:
+            log("set_hidden_for failed:", exc)
+            return None
+
+    def switch_pet(self, pet_key):
+        """
+        "Enter" another pet's settings from this same window: repoints this
+        SettingsApi at pet_key, so every set_* method above (all keyed off
+        self._pet / self._pet_window) starts acting on it, then hands back
+        its config so the page can re-seed every row for the new pet.
+        """
+        try:
+            if pet_key in PETS:
+                self._pet = pet_key
+                self._pet_window = _pet_windows.get(pet_key)
+                # Different pets show a different number of rows (claude/
+                # system add extra ones - see the height= choice in
+                # open_settings_window); resize to match so switching pet
+                # doesn't leave the window too short (clipped rows) or too
+                # tall (dead space).
+                if self._window:
+                    height = 590 if pet_key == "claude" else (490 if pet_key == "system" else 410)
+                    try:
+                        self._window.resize(320, height)
+                    except Exception:
+                        pass  # older pywebview: no resize() - window just keeps its old size
+            return get_pet_config(self._pet)
+        except Exception as exc:
+            log("switch_pet failed:", exc)
+            return get_pet_config(self._pet)
 
 
 def main():
@@ -2067,8 +2183,12 @@ def main():
             transparent=True,
             resizable=False,
             js_api=api,
+            # Reopen hidden if the user hid this pet last session - see
+            # SettingsApi.set_hidden() and get_pet_config()'s "hidden" key.
+            hidden=cfg.get("hidden", False),
         )
         api._window = window
+        _pet_windows[pet] = window
         # Must be armed before webview.start(); see hide_from_taskbar().
         hide_from_taskbar(window)
 

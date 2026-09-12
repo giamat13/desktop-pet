@@ -152,6 +152,20 @@
     </div>
   </div>
 
+  <!-- Every pet gets this - not gated behind cfg.pet like the rows above.
+       Hiding closes this window's only path back (middle-click opens settings
+       from the pet itself, and a hidden pet can't be clicked), so un-hide
+       from right here before closing, or edit config.json's "hidden" key by
+       hand if that window's already gone. -->
+  <div class="row">
+    <span class="label">הצגת החיה</span>
+    <div class="modes" id="hiddenModes">
+      <button data-hidden="0">מוצגת</button>
+      <button data-hidden="1">מוסתרת</button>
+    </div>
+    <span class="value">חיה מוסתרת ממשיכה לרוץ ברקע, רק לא נראית. כדי להחזיר אותה - פתחו את ההגדרות שוב לפני שסוגרים את החלון הזה.</span>
+  </div>
+
   <div class="row">
     <span class="label">כוונון עדין</span>
     <input id="margin" type="range" min="-80" max="180" value="46" />
@@ -165,6 +179,11 @@
   </div>
 
   <button id="save">סגור ✓</button>
+
+  <div class="row">
+    <span class="label">חיות אחרות</span>
+    <div id="otherPetsList" style="display:flex; flex-direction:column; gap:6px;"></div>
+  </div>
 
 <script>
   const marginSlider = document.getElementById('margin');
@@ -198,7 +217,9 @@
   const netArrowsButtons  = [...document.querySelectorAll('#netArrowsModes button')];
   const diskArrowsRow     = document.getElementById('diskArrowsRow');
   const diskArrowsButtons = [...document.querySelectorAll('#diskArrowsModes button')];
+  const hiddenButtons     = [...document.querySelectorAll('#hiddenModes button')];
   const saveBtn        = document.getElementById('save');
+  const otherPetsList  = document.getElementById('otherPetsList');
 
   // System pet only - what each corner gauge can show instead of the fixed
   // CPU/RAM pair. Kept in sync with SettingsApi._ALLOWED_GAUGE_METRICS in
@@ -335,8 +356,59 @@
     if (api() && api().set_show_disk_arrows) api().set_show_disk_arrows(b.dataset.diskArrows === '1');
   }));
 
+  function setHiddenState(v) {
+    hiddenButtons.forEach(b => b.classList.toggle('active', b.dataset.hidden === v));
+  }
+  hiddenButtons.forEach(b => b.addEventListener('click', () => {
+    setHiddenState(b.dataset.hidden);
+    if (api() && api().set_hidden) api().set_hidden(b.dataset.hidden === '1');
+  }));
+
   function api() {
     return (window.pywebview && window.pywebview.api) || null;
+  }
+
+  // "Other pets" list - lets this one settings window reach any pet: toggle
+  // it on/off in place, or "enter" it to re-seed this whole page for it.
+  function renderOtherPets(list) {
+    otherPetsList.innerHTML = '';
+    (list || []).forEach((p) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:6px; padding:4px 0; border-bottom:1px solid #EAD9CE;';
+
+      const name = document.createElement('span');
+      name.textContent = p.label;
+      name.style.fontSize = '12px';
+
+      const btns = document.createElement('div');
+      btns.style.cssText = 'display:flex; gap:4px;';
+
+      const toggleBtn = document.createElement('button');
+      toggleBtn.textContent = p.hidden ? 'הפעל' : 'כבה';
+      toggleBtn.style.cssText = 'font-family:inherit; font-size:11px; padding:4px 8px; border:2px solid #D85A30; border-radius:6px; background:#FFF7F0; color:#B94A24; cursor:pointer;';
+      toggleBtn.addEventListener('click', () => {
+        if (!api() || !api().set_hidden_for) return;
+        api().set_hidden_for(p.key, !p.hidden).then(loadOtherPets);
+      });
+
+      const enterBtn = document.createElement('button');
+      enterBtn.textContent = 'כניסה להגדרות';
+      enterBtn.style.cssText = 'font-family:inherit; font-size:11px; padding:4px 8px; border:none; border-radius:6px; background:#D2703C; color:#FFF7F0; cursor:pointer;';
+      enterBtn.addEventListener('click', () => {
+        if (!api() || !api().switch_pet) return;
+        api().switch_pet(p.key).then((cfg) => { seed(cfg); loadOtherPets(); });
+      });
+
+      btns.appendChild(toggleBtn);
+      btns.appendChild(enterBtn);
+      row.appendChild(name);
+      row.appendChild(btns);
+      otherPetsList.appendChild(row);
+    });
+  }
+
+  function loadOtherPets() {
+    if (api() && api().list_pets) api().list_pets().then(renderOtherPets);
   }
 
   function setActiveMode(mode) {
@@ -385,11 +457,12 @@
     setNetArrowsShown(cfg.show_net_arrows === false ? '0' : '1');
     diskArrowsRow.hidden = cfg.pet !== 'system';
     setDiskArrowsShown(cfg.show_disk_arrows === false ? '0' : '1');
+    setHiddenState(cfg.hidden ? '1' : '0');
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.
   window.addEventListener('pywebviewready', () => {
-    if (api() && api().get_pet_config) api().get_pet_config().then(seed);
+    if (api() && api().get_pet_config) api().get_pet_config().then((cfg) => { seed(cfg); loadOtherPets(); });
   });
 
   let throttle = null;
