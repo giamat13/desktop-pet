@@ -592,6 +592,19 @@ def _test_sample_health_once():
     real_net = psutil.net_io_counters
     real_disk = psutil.disk_io_counters
     real_temp = getattr(psutil, "sensors_temperatures", None)
+    real_disk_usage = psutil.disk_usage
+    real_disk_partitions = psutil.disk_partitions
+
+    class _FakePart:
+        def __init__(self, mountpoint):
+            self.mountpoint = mountpoint
+
+    class _FakeUsage:
+        def __init__(self, used, total):
+            self.used = used
+            self.total = total
+            self.percent = used / total * 100
+
     try:
         psutil.cpu_percent = lambda interval=None: 41.0
         psutil.virtual_memory = lambda: _FakeMem()
@@ -599,6 +612,10 @@ def _test_sample_health_once():
         psutil.net_io_counters = lambda: _FakeNet(2048, 1024)
         psutil.disk_io_counters = lambda: _FakeDisk(4096, 2048)
         psutil.sensors_temperatures = lambda: {"coretemp": [type("T", (), {"current": 55.5})()]}
+        # C: at 50%, D: at 25% -> pooled (500+250)/(1000+1000) = 37.5%
+        fake_disks = {"C:\\": _FakeUsage(500, 1000), "D:\\": _FakeUsage(250, 1000)}
+        psutil.disk_usage = lambda path: fake_disks[path]
+        psutil.disk_partitions = lambda all=False: [_FakePart(p) for p in fake_disks]
 
         last_net = _FakeNet(0, 0)
         last_disk = _FakeDisk(0, 0)
@@ -609,6 +626,8 @@ def _test_sample_health_once():
         assert abs(sample["disk_read_kbps"] - 4.0) < 0.5 and abs(sample["disk_write_kbps"] - 2.0) < 0.5, \
             "4096/2048 bytes over ~1s must read as ~4/~2 KB/s"
         assert sample["cpu_temp_c"] == 55.5, "coretemp sensor must be picked up"
+        assert sample["disk_c_pct"] == 50.0, "system drive usage must read straight off psutil.disk_usage"
+        assert sample["disk_all_pct"] == 37.5, "pooled usage must weight by bytes, not average the two percentages"
 
         psutil.sensors_temperatures = lambda: {}
         sample, _, _, _ = pet_app._sample_health_once(net, disk, sampled_at)
@@ -632,6 +651,8 @@ def _test_sample_health_once():
         psutil.sensors_battery = real_batt
         psutil.net_io_counters = real_net
         psutil.disk_io_counters = real_disk
+        psutil.disk_usage = real_disk_usage
+        psutil.disk_partitions = real_disk_partitions
         if real_temp is None:
             del psutil.sensors_temperatures
         else:

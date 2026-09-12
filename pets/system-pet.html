@@ -152,8 +152,18 @@
     opacity: 0;
     transition: opacity .25s;
   }
-  #gaugeLeft { left: 6px; }
-  #gaugeRight { right: 6px; }
+  #gauge3 { left: 6px; }
+  #gauge4 { right: 6px; }
+  /* The original left/right gauges sit BELOW the net arrows now (see
+     .netArrow below - raised right under 3/4), just above the battery pill.
+     Shrunk (scale .75) to still fit that lower slot; transform-origin keeps
+     each hugging the same edge its full-size sibling above it does. */
+  #gaugeLeft, #gaugeRight {
+    top: 86px;
+    transform: scale(0.75);
+  }
+  #gaugeLeft { left: 6px; transform-origin: top left; }
+  #gaugeRight { right: 6px; transform-origin: top right; }
   .gaugeText {
     font-family: 'Courier New', monospace;
     fill: #F2F7F5;
@@ -174,25 +184,31 @@
     50%      { fill: #F0B94A; }
   }
 
-  /* Download / upload arrows flanking the pet - fixed size and position like
-     the corner gauges, so they don't ride the pet-size slider or bob. Bounce
+  /* Download / upload arrows flanking the pet - fixed position like the
+     corner gauges, so they don't ride the pet-size slider or bob. Bounce
      speed is driven straight from measured net throughput (--arrow-dur, set
-     in setNetArrow()): idle traffic ambles, a saturated link bounces fast. */
+     in setNetArrow()): idle traffic ambles, a saturated link bounces fast.
+     Shrunk to about half their original glyph size, raised right under the
+     3/4 gauge row, and pulled in closer to the centre - the left/right gauge
+     row moved below them to make room. */
   .netArrow {
     position: absolute;
-    top: 70px;
+    top: 58px;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 1px;
+    padding: 3px 6px;
+    border-radius: 10px;
+    background: rgba(14, 21, 25, 0.55);
     opacity: 0;
     transition: opacity .25s;
   }
-  #netDown { left: 30px; }
-  #netUp   { right: 30px; }
+  #netDown { left: 68px; }
+  #netUp   { right: 68px; }
   .netArrow.shown { opacity: 1; }
   .arrowGlyph {
-    font-size: 28px;
+    font-size: 22px;
     line-height: 1;
     color: #9FFFE4;
     text-shadow: 0 0 3px #0E1519, 0 0 3px #0E1519;
@@ -200,12 +216,12 @@
   }
   #netUp .arrowGlyph { color: #F0B94A; }
   @keyframes arrowBounce {
-    0%, 100% { transform: translateY(-4px); opacity: .45; }
-    50%      { transform: translateY(7px);  opacity: 1; }
+    0%, 100% { transform: translateY(-2px); opacity: .45; }
+    50%      { transform: translateY(4px);  opacity: 1; }
   }
   .netLabel {
     font-family: 'Courier New', monospace;
-    font-size: 11px;
+    font-size: 9px;
     font-weight: bold;
     color: #F2F7F5;
     text-shadow: 0 0 3px #0E1519, 0 0 3px #0E1519;
@@ -421,7 +437,31 @@
      re-skinned into the chip's graphite + brass so they read as this machine's
      own instrumentation. Ring r=19/stroke 6, tri-colour threshold from
      gaugeColor() below. Each shows whatever metric settings.html assigned it
-     (applyGaugeMetric()) - CPU/RAM by default, not hardwired to them. -->
+     (applyGaugeMetric()) - "off" hides it entirely (see setGauge() below).
+     4 gauges total: 3/4 (added later, so listed first here) sit full-size in
+     the top corners; the original left/right pair - CPU/RAM by default -
+     sit shrunk below them (see #gaugeLeft/#gaugeRight CSS). -->
+<svg id="gauge3" class="gauge" width="68" height="72" viewBox="0 0 68 72">
+  <rect x="19" y="1" width="30" height="17" rx="8.5" fill="#16232CE6" stroke="#B99549" stroke-width="1.5"/>
+  <text id="gauge3Label" x="34" y="14" class="gaugeText" font-size="11" font-weight="bold" text-anchor="middle">-</text>
+  <circle cx="34" cy="47" r="23" fill="#16232CE6" stroke="#B99549" stroke-width="1.5"/>
+  <circle cx="34" cy="47" r="19" fill="none" stroke="#FFFFFF26" stroke-width="6"/>
+  <circle id="gauge3Arc" cx="34" cy="47" r="19" fill="none" stroke="#3FC98A" stroke-width="6"
+          stroke-linecap="round" transform="rotate(-90 34 47)" stroke-dasharray="0 119.4"/>
+  <text id="gauge3Value" x="34" y="53" class="gaugeText" font-size="17" font-weight="bold" text-anchor="middle">0%</text>
+</svg>
+<svg id="gauge4" class="gauge" width="68" height="72" viewBox="0 0 68 72">
+  <rect x="19" y="1" width="30" height="17" rx="8.5" fill="#16232CE6" stroke="#B99549" stroke-width="1.5"/>
+  <text id="gauge4Label" x="34" y="14" class="gaugeText" font-size="11" font-weight="bold" text-anchor="middle">-</text>
+  <circle cx="34" cy="47" r="23" fill="#16232CE6" stroke="#B99549" stroke-width="1.5"/>
+  <circle cx="34" cy="47" r="19" fill="none" stroke="#FFFFFF26" stroke-width="6"/>
+  <circle id="gauge4Arc" cx="34" cy="47" r="19" fill="none" stroke="#3FC98A" stroke-width="6"
+          stroke-linecap="round" transform="rotate(-90 34 47)" stroke-dasharray="0 119.4"/>
+  <text id="gauge4Value" x="34" y="53" class="gaugeText" font-size="17" font-weight="bold" text-anchor="middle">0%</text>
+</svg>
+<!-- Original left/right gauges: same ring, shrunk (see #gaugeLeft/#gaugeRight
+     CSS) and stacked directly below 3/4 - both pairs live at the top of the
+     pet, nothing pushed down toward the net arrows or battery. -->
 <svg id="gaugeLeft" class="gauge" width="68" height="72" viewBox="0 0 68 72">
   <rect x="19" y="1" width="30" height="17" rx="8.5" fill="#16232CE6" stroke="#B99549" stroke-width="1.5"/>
   <text id="gaugeLeftLabel" x="34" y="14" class="gaugeText" font-size="11" font-weight="bold" text-anchor="middle">CPU</text>
@@ -467,14 +507,19 @@
   }
 
   // Which metric each corner gauge shows - settings.html picks these; default
-  // to the original CPU/RAM pair until get_pet_config() says otherwise.
-  let leftMetric = 'cpu';
-  let rightMetric = 'ram';
+  // to the original CPU/RAM pair until get_pet_config() says otherwise. '3'
+  // and '4' are a later addition alongside the original left/right pair,
+  // default 'off' so they stay invisible until a user actually picks
+  // something. Keyed by side string, matching the gauge_<side> config field
+  // and the applyGaugeMetric(side, metric) call from set_gauge_metric.
+  const GAUGE_SIDES = ['left', 'right', '3', '4'];
+  const GAUGE_IDS = { left: 'gaugeLeft', right: 'gaugeRight', '3': 'gauge3', '4': 'gauge4' };
+  const gaugeMetrics = { left: 'cpu', right: 'ram', '3': 'off', '4': 'off' };
   let graphMetric = 'cpu';
   let blinkMetricL = 'cpu';
   let blinkMetricR = 'cpu';
   function applyGaugeMetric(side, metric) {
-    if (side === 'left') leftMetric = metric; else rightMetric = metric;
+    if (side in gaugeMetrics) gaugeMetrics[side] = metric;
   }
   function applyGraphMetric(metric) {
     graphMetric = metric;
@@ -491,25 +536,36 @@
   }
 
   // Pins: a populated-socket motif over a fixed hardware spec, not a live
-  // gauge - ramTotalGb/cpuCores are read once at startup (get_pet_config,
-  // system pet only) since they never change while the pet runs. 4GB per pin
-  // under 'ram', 2 logical cores per pin under 'cores'. The pin count itself
-  // (not a fixed 8 with some dimmed) scales with the spec - a 64GB machine
-  // gets 8 per side - and each side's pins are laid out centered in the
-  // body's pin band rather than pinned to the top.
+  // gauge - ramTotalGb/cpuCores/diskCTotalGb/diskAllTotalGb are read once at
+  // startup (get_pet_config, system pet only) since they never change while
+  // the pet runs. 4GB per pin under 'ram', 2 logical cores per pin under
+  // 'cores', 64GB per pin for the system drive under 'disk_c', 128GB per pin
+  // for every mounted drive pooled together under 'disk_all' - a much bigger
+  // per-pin unit than RAM/cores since disks run into the TBs. The pin count
+  // itself (not a fixed 8 with some dimmed) scales with the spec - a 64GB
+  // RAM machine gets 8 per side - and each side's pins are laid out centered
+  // in the body's pin band rather than pinned to the top.
   let pinMetric = 'ram';
   let ramTotalGb = null;
   let cpuCores = null;
+  let diskCTotalGb = null;
+  let diskAllTotalGb = null;
 
   const PIN_X_L = 60, PIN_X_R = 216, PIN_W = 24, PIN_H = 11;
   const PIN_MAX_PITCH = 24;      // spacing used whenever this many pins fit at the original pitch
   const PIN_AREA_TOP = 114, PIN_AREA_BOTTOM = 220; // vertical band pins center within (inside the body's left/right edge)
   const PIN_MAX_PER_SIDE = 8;    // 64GB / 4GB-per-pin -> 8 per side, the example this was sized for
+  const PIN_GB_PER_PIN_DISK_C = 64;
+  const PIN_GB_PER_PIN_DISK_ALL = 128;
 
   function computePinTotal() {
-    const raw = pinMetric === 'cores'
-      ? (cpuCores != null ? cpuCores / 2 : null)
-      : (ramTotalGb != null ? ramTotalGb / 4 : null);
+    let raw;
+    switch (pinMetric) {
+      case 'cores': raw = cpuCores != null ? cpuCores / 2 : null; break;
+      case 'disk_c': raw = diskCTotalGb != null ? diskCTotalGb / PIN_GB_PER_PIN_DISK_C : null; break;
+      case 'disk_all': raw = diskAllTotalGb != null ? diskAllTotalGb / PIN_GB_PER_PIN_DISK_ALL : null; break;
+      default: raw = ramTotalGb != null ? ramTotalGb / 4 : null;
+    }
     // Spec unknown (psutil missing): fall back to the original 4-per-side look.
     if (raw == null) return 8;
     return Math.max(2, Math.min(PIN_MAX_PER_SIDE * 2, Math.round(raw)));
@@ -570,8 +626,16 @@
   // under 'ram', CPU% under 'cores') - not a live value each pin carries,
   // just how many of the fixed sockets are lit.
   let lastPinPct = null;
+  function pinUsagePct(h) {
+    switch (pinMetric) {
+      case 'cores': return h.cpu_pct;
+      case 'disk_c': return h.disk_c_pct;
+      case 'disk_all': return h.disk_all_pct;
+      default: return h.ram_pct;
+    }
+  }
   function updatePinUsage(h) {
-    const pct = h ? Math.max(0, Math.min(100, (pinMetric === 'cores' ? h.cpu_pct : h.ram_pct) || 0)) : 0;
+    const pct = h ? Math.max(0, Math.min(100, pinUsagePct(h) || 0)) : 0;
     if (pct === lastPinPct) return;
     lastPinPct = pct;
     const lit = Math.round(allPinRects.length * pct / 100);
@@ -583,14 +647,18 @@
       window.pywebview.api.get_pet_config().then((cfg) => {
         if (!cfg) return;
         if (cfg.size) applyPetScale(cfg.size);
-        if (cfg.gauge_left) leftMetric = cfg.gauge_left;
-        if (cfg.gauge_right) rightMetric = cfg.gauge_right;
+        if (cfg.gauge_left) gaugeMetrics.left = cfg.gauge_left;
+        if (cfg.gauge_right) gaugeMetrics.right = cfg.gauge_right;
+        if (cfg.gauge_3) gaugeMetrics['3'] = cfg.gauge_3;
+        if (cfg.gauge_4) gaugeMetrics['4'] = cfg.gauge_4;
         if (cfg.graph_metric) graphMetric = cfg.graph_metric;
         if (cfg.blink_metric_left) blinkMetricL = cfg.blink_metric_left;
         if (cfg.blink_metric_right) blinkMetricR = cfg.blink_metric_right;
         if (cfg.pin_metric) pinMetric = cfg.pin_metric;
         if (cfg.ram_total_gb != null) ramTotalGb = cfg.ram_total_gb;
         if (cfg.cpu_cores != null) cpuCores = cfg.cpu_cores;
+        if (cfg.disk_c_total_gb != null) diskCTotalGb = cfg.disk_c_total_gb;
+        if (cfg.disk_all_total_gb != null) diskAllTotalGb = cfg.disk_all_total_gb;
         if (cfg.speed_unit) speedUnit = cfg.speed_unit;
         renderPins();
       });
@@ -627,6 +695,7 @@
     net_up:     { label: 'UP',  max: NET_GAUGE_MAX_KBPS },
     disk_read:  { label: 'DR',  max: DISK_GAUGE_MAX_KBPS },
     disk_write: { label: 'DW',  max: DISK_GAUGE_MAX_KBPS },
+    disk_usage: { label: 'DSK', max: 100 },
     temp:       { label: 'TMP', max: TEMP_GAUGE_MAX_C },
   };
 
@@ -639,6 +708,7 @@
       case 'net_up': return h.net_up_kbps;
       case 'disk_read': return h.disk_read_kbps;
       case 'disk_write': return h.disk_write_kbps;
+      case 'disk_usage': return h.disk_c_pct;
       case 'temp': return h.cpu_temp_c;
       default: return null;
     }
@@ -665,6 +735,7 @@
 
   function setGauge(id, key, raw) {
     const g = document.getElementById(id);
+    if (key === 'off') { g.style.opacity = '0'; return; }
     const meta = METRIC_META[key] || METRIC_META.cpu;
     document.getElementById(id + 'Label').textContent = meta.label;
     if (raw == null) { g.style.opacity = '0'; return; }
@@ -761,6 +832,8 @@
         const kbps = Math.max(h.disk_read_kbps || 0, h.disk_write_kbps || 0);
         return clamp01(Math.log2(1 + kbps / 1024) / 8); // same log shape as 'net', rebased for disk's much bigger KB/s range
       }
+      case 'disk_usage':
+        return clamp01((h.disk_c_pct || 0) / 100);
       case 'window': {
         // Not a gauge value - a brief speed-up right when the foreground
         // window actually changes, calm otherwise. window_switches is a
@@ -801,8 +874,7 @@
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_system_health)) return;
     window.pywebview.api.get_system_health().then((h) => {
       if (!h) {
-        setGauge('gaugeLeft', leftMetric, null);
-        setGauge('gaugeRight', rightMetric, null);
+        GAUGE_SIDES.forEach((side) => setGauge(GAUGE_IDS[side], gaugeMetrics[side], null));
         setLoad(null);
         battery.classList.remove('shown');
         sweat.classList.remove('shown');
@@ -813,8 +885,10 @@
         updatePinUsage(null);
         return;
       }
-      setGauge('gaugeLeft', leftMetric, metricRaw(h, leftMetric));
-      setGauge('gaugeRight', rightMetric, metricRaw(h, rightMetric));
+      GAUGE_SIDES.forEach((side) => {
+        const metric = gaugeMetrics[side];
+        setGauge(GAUGE_IDS[side], metric, metric === 'off' ? null : metricRaw(h, metric));
+      });
       setLoad(h);
       drawGraph(h);
       setNetArrow(netDown, h.net_down_kbps);

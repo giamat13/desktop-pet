@@ -1332,6 +1332,7 @@ _health_cache = {
     "net_down_kbps": None, "net_up_kbps": None,
     "disk_read_kbps": None, "disk_write_kbps": None,
     "cpu_temp_c": None,
+    "disk_c_pct": None, "disk_all_pct": None,
     # Running count of foreground-window changes, for the "window" blink
     # metric. A count rather than a timestamp so a 2s JS poll can detect a
     # switch that happened and ended between two polls just by seeing the
@@ -1383,6 +1384,38 @@ def _read_cpu_temp():
     return None
 
 
+def _system_drive():
+    """The drive Windows itself lives on - 'C:\\' on the overwhelming majority
+    of machines, but %SystemDrive% is the real answer when it isn't."""
+    return os.environ.get("SystemDrive", "C:") + "\\"
+
+
+def _read_disk_usage_pct():
+    """
+    Storage usage in percent: the system drive alone, and pooled across every
+    mounted partition. Unlike the static total-GB specs in
+    read_hardware_specs(), used space changes while the pet runs, so this is
+    sampled live like cpu_pct/ram_pct rather than read once. An inaccessible
+    partition (empty optical drive, disconnected network mount) is just
+    skipped rather than failing the whole read.
+    """
+    import psutil
+    try:
+        c_pct = psutil.disk_usage(_system_drive()).percent
+    except OSError:
+        c_pct = None
+    used = total = 0
+    for part in psutil.disk_partitions(all=False):
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except OSError:
+            continue
+        used += usage.used
+        total += usage.total
+    all_pct = (used / total * 100) if total else None
+    return c_pct, all_pct
+
+
 def _sample_health_once(last_net, last_disk, last_t):
     """
     One real sample: blocks ~1s on psutil.cpu_percent(interval=1). Split out
@@ -1409,6 +1442,7 @@ def _sample_health_once(last_net, last_disk, last_t):
     now = time.time()
     net = psutil.net_io_counters()
     disk = psutil.disk_io_counters()
+    disk_c_pct, disk_all_pct = _read_disk_usage_pct()
     dt = max(now - last_t, 0.001)
     down_kbps = (net.bytes_recv - last_net.bytes_recv) / dt / 1024
     up_kbps = (net.bytes_sent - last_net.bytes_sent) / dt / 1024
@@ -1420,6 +1454,8 @@ def _sample_health_once(last_net, last_disk, last_t):
         "net_down_kbps": max(0.0, down_kbps),
         "net_up_kbps": max(0.0, up_kbps),
         "cpu_temp_c": _read_cpu_temp(),
+        "disk_c_pct": disk_c_pct,
+        "disk_all_pct": disk_all_pct,
     }
     if disk is not None and last_disk is not None:
         read_kbps = (disk.read_bytes - last_disk.read_bytes) / dt / 1024
@@ -1502,20 +1538,29 @@ def run_boost():
 
 def read_hardware_specs():
     """
-    Static specs for the pin motif: total RAM in whole GB, and logical CPU
-    core count. Read once via psutil, not through the 1Hz health sampler -
-    unlike cpu_pct/ram_pct these don't change while the pet runs, so there is
-    nothing to poll. Returns (None, None) if psutil is unavailable, same
-    fail-quiet convention as read_system_health().
+    Static specs for the pin motif: total RAM in whole GB, logical CPU core
+    count, system-drive capacity, and total capacity pooled across every
+    mounted partition. Read once via psutil, not through the 1Hz health
+    sampler - unlike cpu_pct/ram_pct/disk_c_pct these don't change while the
+    pet runs, so there is nothing to poll. Returns a 4-tuple of Nones if
+    psutil is unavailable, same fail-quiet convention as read_system_health().
     """
     try:
         import psutil
         ram_gb = round(psutil.virtual_memory().total / (1024 ** 3))
         cores = psutil.cpu_count(logical=True)
-        return ram_gb, cores
+        disk_c_gb = round(psutil.disk_usage(_system_drive()).total / (1024 ** 3))
+        total_bytes = 0
+        for part in psutil.disk_partitions(all=False):
+            try:
+                total_bytes += psutil.disk_usage(part.mountpoint).total
+            except OSError:
+                continue
+        disk_all_gb = round(total_bytes / (1024 ** 3))
+        return ram_gb, cores, disk_c_gb, disk_all_gb
     except Exception as exc:
         log("read_hardware_specs failed:", exc)
-        return None, None
+        return None, None, None, None
 
 
 def get_pet_config(pet):
@@ -1536,8 +1581,13 @@ def get_pet_config(pet):
         "usage_refresh": get_usage_refresh() if pet == "claude" else None,
         # Which metric each corner gauge shows. System pet only; settings.html
         # hides the row for every other pet, same convention as the two above.
+        # gauge_3/gauge_4 are a later addition alongside the original
+        # left/right pair - "off" by default so they stay invisible until a
+        # user actually picks something for them.
         "gauge_left": cfg.get("gauge_left", "cpu"),
         "gauge_right": cfg.get("gauge_right", "ram"),
+        "gauge_3": cfg.get("gauge_3", "off"),
+        "gauge_4": cfg.get("gauge_4", "off"),
         # Which metric the die's live history graph plots. System pet only.
         "graph_metric": cfg.get("graph_metric", "cpu"),
         # What drives how fast each eye blinks. System pet only; both default
@@ -1554,9 +1604,11 @@ def get_pet_config(pet):
         # Static hardware specs, read once - the pins are a populated/
         # unpopulated-socket motif (each pin = one fixed unit of capacity),
         # not a live gauge, so the pet only needs these at load, not per poll.
-        ram_gb, cores = read_hardware_specs()
+        ram_gb, cores, disk_c_gb, disk_all_gb = read_hardware_specs()
         out["ram_total_gb"] = ram_gb
         out["cpu_cores"] = cores
+        out["disk_c_total_gb"] = disk_c_gb
+        out["disk_all_total_gb"] = disk_all_gb
     return out
 
 
@@ -1798,25 +1850,33 @@ class SettingsApi:
 
     # Underscore-prefixed: see Api.__init__ on why nothing non-JS-facing here
     # can be a bare public attribute.
+    # "off" hides that corner gauge entirely - valid on every one of the 4
+    # (left/right/3/4), not just the two added later.
     _ALLOWED_GAUGE_METRICS = {
-        "cpu", "ram", "battery", "net_down", "net_up",
-        "disk_read", "disk_write", "temp",
+        "off", "cpu", "ram", "battery", "net_down", "net_up",
+        "disk_read", "disk_write", "disk_usage", "temp",
     }
+    _GAUGE_SIDES = {"left", "right", "3", "4"}
 
     def set_gauge_metric(self, side, metric):
         """
-        System pet only: pick what the left/right corner gauge shows, in place
-        of the fixed CPU/RAM assignment. Pushed live like set_size/set_session_mode.
+        System pet only: pick what one of the 4 corner gauges shows, in place
+        of the fixed CPU/RAM assignment on the original left/right pair.
+        Pushed live like set_size/set_session_mode.
         """
-        if self._pet != "system" or side not in ("left", "right") or metric not in self._ALLOWED_GAUGE_METRICS:
+        if self._pet != "system" or side not in self._GAUGE_SIDES or metric not in self._ALLOWED_GAUGE_METRICS:
             return
         update_config(self._pet, **{f"gauge_{side}": metric})
         if self._pet_window:
             self._pet_window.evaluate_js(f"applyGaugeMetric('{side}', '{metric}')")
 
     def set_graph_metric(self, metric):
-        """System pet only: pick what the die's live history graph plots."""
-        if self._pet != "system" or metric not in self._ALLOWED_GAUGE_METRICS:
+        """
+        System pet only: pick what the die's live history graph plots. "off"
+        is deliberately excluded - unlike a corner gauge the graph has no
+        "hidden" rendering, it would just plot a flat empty line.
+        """
+        if self._pet != "system" or metric not in (self._ALLOWED_GAUGE_METRICS - {"off"}):
             return
         update_config(self._pet, graph_metric=metric)
         if self._pet_window:
@@ -1826,7 +1886,7 @@ class SettingsApi:
     # rate only needs "is a transfer happening", not which direction. "window"
     # isn't a 0-100 gauge value like the others; JS reads it off
     # window_switches instead.
-    _ALLOWED_BLINK_METRICS = {"cpu", "ram", "net", "disk", "window"}
+    _ALLOWED_BLINK_METRICS = {"cpu", "ram", "net", "disk", "disk_usage", "window"}
 
     def set_blink_metric(self, side, metric):
         """
@@ -1841,9 +1901,13 @@ class SettingsApi:
             self._pet_window.evaluate_js(f"applyBlinkMetric('{side}', '{metric}')")
 
     # "ram": each of the 8 side pins is a fixed 4GB of installed RAM.
-    # "cores": each pin is 2 logical cores. Either way the pins are a
-    # populated/unpopulated-socket readout of a STATIC spec, not a live gauge.
-    _ALLOWED_PIN_METRICS = {"ram", "cores"}
+    # "cores": each pin is 2 logical cores. "disk_c"/"disk_all": a fixed chunk
+    # of the system drive's capacity, or of every mounted drive's pooled
+    # capacity. Either way the pins are a populated/unpopulated-socket
+    # readout of a STATIC spec, not a live gauge - what lights them up is a
+    # live percentage (see updatePinUsage() in system-pet.html), but the pin
+    # COUNT itself never changes while the pet runs.
+    _ALLOWED_PIN_METRICS = {"ram", "cores", "disk_c", "disk_all"}
 
     def set_pin_metric(self, metric):
         """System pet only: pick what the 8 side pins represent."""

@@ -92,8 +92,10 @@
   <!-- System pet only: pick what each corner gauge shows instead of the
        fixed CPU/RAM assignment. Hidden until get_pet_config() names the pet. -->
   <div class="row" id="gaugeRow" hidden>
-    <span class="label">מה מוצג במדים</span>
-    <div style="display:flex; gap:8px;">
+    <span class="label">מה מוצג במדים (ניתן לכבות כל אחד)</span>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <select id="gauge3Select"></select>
+      <select id="gauge4Select"></select>
       <select id="gaugeLeftSelect"></select>
       <select id="gaugeRightSelect"></select>
     </div>
@@ -162,6 +164,8 @@
   const gaugeRow          = document.getElementById('gaugeRow');
   const gaugeLeftSelect   = document.getElementById('gaugeLeftSelect');
   const gaugeRightSelect  = document.getElementById('gaugeRightSelect');
+  const gauge3Select      = document.getElementById('gauge3Select');
+  const gauge4Select      = document.getElementById('gauge4Select');
   const graphRow          = document.getElementById('graphRow');
   const graphSelect       = document.getElementById('graphSelect');
   const blinkRow          = document.getElementById('blinkRow');
@@ -175,7 +179,10 @@
   const saveBtn        = document.getElementById('save');
 
   // System pet only - what each corner gauge can show instead of the fixed
-  // CPU/RAM pair. Kept in sync with SettingsApi._ALLOWED_GAUGE_METRICS in pet_app.py.
+  // CPU/RAM pair. Kept in sync with SettingsApi._ALLOWED_GAUGE_METRICS in
+  // pet_app.py. "off" is a corner-gauge-only choice - the graph has no
+  // "hidden" rendering (see set_graph_metric there), so it gets the plain
+  // list without it.
   const GAUGE_METRICS = [
     ['cpu', 'מעבד (CPU)'],
     ['ram', 'זיכרון (RAM)'],
@@ -184,21 +191,30 @@
     ['net_up', 'העלאה'],
     ['disk_read', 'קריאה מדיסק'],
     ['disk_write', 'כתיבה לדיסק'],
+    ['disk_usage', 'שימוש בדיסק (C)'],
     ['temp', 'חום מעבד'],
   ];
-  [gaugeLeftSelect, gaugeRightSelect, graphSelect].forEach((sel) => {
-    GAUGE_METRICS.forEach(([value, label]) => {
+  const CORNER_GAUGE_METRICS = [['off', 'כבוי'], ...GAUGE_METRICS];
+  const gaugeSelects = [gauge3Select, gauge4Select, gaugeLeftSelect, gaugeRightSelect];
+  gaugeSelects.forEach((sel) => {
+    CORNER_GAUGE_METRICS.forEach(([value, label]) => {
       const opt = document.createElement('option');
       opt.value = value;
       opt.textContent = label;
       sel.appendChild(opt);
     });
   });
-  gaugeLeftSelect.addEventListener('change', () => {
-    if (api() && api().set_gauge_metric) api().set_gauge_metric('left', gaugeLeftSelect.value);
+  GAUGE_METRICS.forEach(([value, label]) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    graphSelect.appendChild(opt);
   });
-  gaugeRightSelect.addEventListener('change', () => {
-    if (api() && api().set_gauge_metric) api().set_gauge_metric('right', gaugeRightSelect.value);
+  const GAUGE_SIDES = { left: gaugeLeftSelect, right: gaugeRightSelect, '3': gauge3Select, '4': gauge4Select };
+  Object.entries(GAUGE_SIDES).forEach(([side, sel]) => {
+    sel.addEventListener('change', () => {
+      if (api() && api().set_gauge_metric) api().set_gauge_metric(side, sel.value);
+    });
   });
   graphSelect.addEventListener('change', () => {
     if (api() && api().set_graph_metric) api().set_graph_metric(graphSelect.value);
@@ -213,6 +229,7 @@
     ['ram', 'זיכרון (RAM)'],
     ['net', 'העברת נתונים (רשת)'],
     ['disk', 'פעילות דיסק'],
+    ['disk_usage', 'שימוש בדיסק (C)'],
     ['window', 'החלפת חלון'],
   ];
   [blinkLeftSelect, blinkRightSelect].forEach((sel) => {
@@ -236,6 +253,8 @@
   const PIN_METRICS = [
     ['ram', 'זיכרון (4GB לפין)'],
     ['cores', 'ליבות מעבד (2 לפין)'],
+    ['disk_c', 'אחסון בדיסק C (64GB לפין)'],
+    ['disk_all', 'אחסון בכל הדיסקים (128GB לפין)'],
   ];
   PIN_METRICS.forEach(([value, label]) => {
     const opt = document.createElement('option');
@@ -256,24 +275,26 @@
     if (api() && api().set_speed_unit) api().set_speed_unit(b.dataset.speed);
   }));
 
-  let currentSpecs = { ram_total_gb: null, cpu_cores: null };
-  // Mirrors computePinTotal() in system-pet.html: 4GB or 2 cores per pin,
-  // clamped to 2..16 total (8 per side max - the spec this was sized for).
+  let currentSpecs = { ram_total_gb: null, cpu_cores: null, disk_c_total_gb: null, disk_all_total_gb: null };
+  // Mirrors computePinTotal() in system-pet.html: GB/cores per pin per
+  // metric, clamped to 2..16 total (8 per side max - the spec this was sized
+  // for). [spec field, GB/cores per pin, unit suffix for the display string]
+  const PIN_SPECS = {
+    ram: ['ram_total_gb', 4, 'GB'],
+    cores: ['cpu_cores', 2, ' ליבות'],
+    disk_c: ['disk_c_total_gb', 64, 'GB'],
+    disk_all: ['disk_all_total_gb', 128, 'GB'],
+  };
   function pinTotalFor(spec, unit) {
     return spec == null ? null : Math.max(2, Math.min(16, Math.round(spec / unit)));
   }
   function updatePinValue() {
-    if (pinSelect.value === 'cores') {
-      const total = pinTotalFor(currentSpecs.cpu_cores, 2);
-      pinValue.textContent = currentSpecs.cpu_cores != null
-        ? `${currentSpecs.cpu_cores} ליבות → ${total} פינים (${Math.ceil(total / 2)}/${Math.floor(total / 2)})`
-        : '';
-    } else {
-      const total = pinTotalFor(currentSpecs.ram_total_gb, 4);
-      pinValue.textContent = currentSpecs.ram_total_gb != null
-        ? `${currentSpecs.ram_total_gb}GB → ${total} פינים (${Math.ceil(total / 2)}/${Math.floor(total / 2)})`
-        : '';
-    }
+    const [field, unit, suffix] = PIN_SPECS[pinSelect.value] || PIN_SPECS.ram;
+    const spec = currentSpecs[field];
+    const total = pinTotalFor(spec, unit);
+    pinValue.textContent = spec != null
+      ? `${spec}${suffix} → ${total} פינים (${Math.ceil(total / 2)}/${Math.floor(total / 2)})`
+      : '';
   }
 
   function api() {
@@ -304,6 +325,8 @@
     gaugeRow.hidden = cfg.pet !== 'system';
     gaugeLeftSelect.value = cfg.gauge_left || 'cpu';
     gaugeRightSelect.value = cfg.gauge_right || 'ram';
+    gauge3Select.value = cfg.gauge_3 || 'off';
+    gauge4Select.value = cfg.gauge_4 || 'off';
     graphRow.hidden = cfg.pet !== 'system';
     graphSelect.value = cfg.graph_metric || 'cpu';
     blinkRow.hidden = cfg.pet !== 'system';
@@ -311,7 +334,12 @@
     blinkRightSelect.value = cfg.blink_metric_right || 'cpu';
     pinRow.hidden = cfg.pet !== 'system';
     pinSelect.value = cfg.pin_metric || 'ram';
-    currentSpecs = { ram_total_gb: cfg.ram_total_gb, cpu_cores: cfg.cpu_cores };
+    currentSpecs = {
+      ram_total_gb: cfg.ram_total_gb,
+      cpu_cores: cfg.cpu_cores,
+      disk_c_total_gb: cfg.disk_c_total_gb,
+      disk_all_total_gb: cfg.disk_all_total_gb,
+    };
     updatePinValue();
     speedRow.hidden = cfg.pet !== 'system';
     setSpeedUnit(cfg.speed_unit || 'MB');
