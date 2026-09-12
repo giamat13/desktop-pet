@@ -1598,6 +1598,13 @@ def get_pet_config(pet):
         # Whether the net arrows read in bytes (MB/s, the raw sampled unit)
         # or bits (Mb/s, ×8 - what ISPs advertise). System pet only.
         "speed_unit": cfg.get("speed_unit", "MB"),
+        # Whether the download/upload speed icons are shown at all. On by
+        # default; settings.html lets a user hide them. System pet only.
+        "show_net_arrows": cfg.get("show_net_arrows", True),
+        # Whether the disk read/write speed icons (pencil + magnifier) are
+        # shown at all. On by default; settings.html lets a user hide them.
+        # System pet only.
+        "show_disk_arrows": cfg.get("show_disk_arrows", True),
     }
     if pet == "system":
         out["pin_metric"] = cfg.get("pin_metric", "ram")
@@ -1928,6 +1935,25 @@ class SettingsApi:
         update_config(self._pet, speed_unit=unit)
         if self._pet_window:
             self._pet_window.evaluate_js(f"applySpeedUnit('{unit}')")
+
+    def set_show_net_arrows(self, on):
+        """System pet only: show/hide the download/upload speed icons."""
+        if self._pet != "system":
+            return
+        on = bool(on)
+        update_config(self._pet, show_net_arrows=on)
+        if self._pet_window:
+            self._pet_window.evaluate_js(f"applyShowNetArrows({'true' if on else 'false'})")
+
+    def set_show_disk_arrows(self, on):
+        """System pet only: show/hide the disk read/write speed icons
+        (pencil for writes, magnifier for reads)."""
+        if self._pet != "system":
+            return
+        on = bool(on)
+        update_config(self._pet, show_disk_arrows=on)
+        if self._pet_window:
+            self._pet_window.evaluate_js(f"applyShowDiskArrows({'true' if on else 'false'})")
 
     def close_settings(self):
         try:

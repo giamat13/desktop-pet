@@ -134,6 +134,24 @@
     </div>
   </div>
 
+  <!-- System pet only: show/hide the download/upload speed icons. -->
+  <div class="row" id="netArrowsRow" hidden>
+    <span class="label">חיצי הורדה/העלאה</span>
+    <div class="modes" id="netArrowsModes">
+      <button data-net-arrows="1">מוצגים</button>
+      <button data-net-arrows="0">מוסתרים</button>
+    </div>
+  </div>
+
+  <!-- System pet only: show/hide the disk read/write icons (magnifier + pencil). -->
+  <div class="row" id="diskArrowsRow" hidden>
+    <span class="label">סמלי קריאה/כתיבה בדיסק</span>
+    <div class="modes" id="diskArrowsModes">
+      <button data-disk-arrows="1">מוצגים</button>
+      <button data-disk-arrows="0">מוסתרים</button>
+    </div>
+  </div>
+
   <div class="row">
     <span class="label">כוונון עדין</span>
     <input id="margin" type="range" min="-80" max="180" value="46" />
@@ -176,6 +194,10 @@
   const pinValue          = document.getElementById('pinValue');
   const speedRow          = document.getElementById('speedRow');
   const speedButtons      = [...document.querySelectorAll('#speedModes button')];
+  const netArrowsRow      = document.getElementById('netArrowsRow');
+  const netArrowsButtons  = [...document.querySelectorAll('#netArrowsModes button')];
+  const diskArrowsRow     = document.getElementById('diskArrowsRow');
+  const diskArrowsButtons = [...document.querySelectorAll('#diskArrowsModes button')];
   const saveBtn        = document.getElementById('save');
 
   // System pet only - what each corner gauge can show instead of the fixed
@@ -297,6 +319,22 @@
       : '';
   }
 
+  function setNetArrowsShown(v) {
+    netArrowsButtons.forEach(b => b.classList.toggle('active', b.dataset.netArrows === v));
+  }
+  netArrowsButtons.forEach(b => b.addEventListener('click', () => {
+    setNetArrowsShown(b.dataset.netArrows);
+    if (api() && api().set_show_net_arrows) api().set_show_net_arrows(b.dataset.netArrows === '1');
+  }));
+
+  function setDiskArrowsShown(v) {
+    diskArrowsButtons.forEach(b => b.classList.toggle('active', b.dataset.diskArrows === v));
+  }
+  diskArrowsButtons.forEach(b => b.addEventListener('click', () => {
+    setDiskArrowsShown(b.dataset.diskArrows);
+    if (api() && api().set_show_disk_arrows) api().set_show_disk_arrows(b.dataset.diskArrows === '1');
+  }));
+
   function api() {
     return (window.pywebview && window.pywebview.api) || null;
   }
@@ -343,6 +381,10 @@
     updatePinValue();
     speedRow.hidden = cfg.pet !== 'system';
     setSpeedUnit(cfg.speed_unit || 'MB');
+    netArrowsRow.hidden = cfg.pet !== 'system';
+    setNetArrowsShown(cfg.show_net_arrows === false ? '0' : '1');
+    diskArrowsRow.hidden = cfg.pet !== 'system';
+    setDiskArrowsShown(cfg.show_disk_arrows === false ? '0' : '1');
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.

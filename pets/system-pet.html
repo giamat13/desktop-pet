@@ -227,6 +227,51 @@
     text-shadow: 0 0 3px #0E1519, 0 0 3px #0E1519;
     white-space: nowrap;
   }
+
+  /* Disk read/write icons: same fixed-pill construction as .netArrow, one row
+     lower so they don't collide with it. A pencil "writes" for disk_write_kbps,
+     a magnifier "scans" for disk_read_kbps - both real throughput, not
+     decoration (see setDiskIcon() below), same convention as the net arrows'
+     --arrow-dur. */
+  .diskArrow {
+    position: absolute;
+    top: 100px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 3px 6px;
+    border-radius: 10px;
+    background: rgba(14, 21, 25, 0.55);
+    opacity: 0;
+    transition: opacity .25s;
+  }
+  #diskRead  { left: 68px; }
+  #diskWrite { right: 68px; }
+  .diskArrow.shown { opacity: 1; }
+  .diskGlyph {
+    font-size: 18px;
+    line-height: 1;
+    text-shadow: 0 0 3px #0E1519, 0 0 3px #0E1519;
+    animation: diskPulse var(--disk-dur, 1.3s) ease-in-out infinite;
+  }
+  #diskRead .diskGlyph {
+    color: #9FFFE4;
+    animation-name: diskScan; /* magnifier sweeps side to side, reading */
+  }
+  #diskWrite .diskGlyph {
+    color: #F0B94A;
+    animation-name: pencilWrite; /* pencil rocks like it's scribbling */
+    transform-origin: 70% 85%;
+  }
+  @keyframes diskScan {
+    0%, 100% { transform: translateX(-3px); }
+    50%      { transform: translateX(3px); }
+  }
+  @keyframes pencilWrite {
+    0%, 100% { transform: rotate(-10deg); }
+    50%      { transform: rotate(12deg); }
+  }
   /* Pins in use right now (updatePinUsage()): brass swaps for the same lit
      teal as the die, so a "populated socket" reads as "live" the same way
      the screen does, not just a brighter brass. */
@@ -483,6 +528,10 @@
 <div id="battery"><span id="batteryFill"></span><span id="batteryText"></span></div>
 <div id="netDown" class="netArrow"><span class="arrowGlyph">&#8595;</span><span class="netLabel" id="netDownLabel">--</span></div>
 <div id="netUp" class="netArrow"><span class="arrowGlyph">&#8593;</span><span class="netLabel" id="netUpLabel">--</span></div>
+<!-- Disk read/write icons: a magnifier that scans for reads, a pencil that
+     scribbles for writes - both animate at a real rate, see setDiskIcon(). -->
+<div id="diskRead" class="diskArrow"><span class="diskGlyph">&#128269;</span><span class="netLabel" id="diskReadLabel">--</span></div>
+<div id="diskWrite" class="diskArrow"><span class="diskGlyph">&#9998;</span><span class="netLabel" id="diskWriteLabel">--</span></div>
 </div>
 
 <script>
@@ -501,6 +550,8 @@
   const boostBtn    = document.getElementById('boostBtn');
   const netDown     = document.getElementById('netDown');
   const netUp       = document.getElementById('netUp');
+  const diskRead    = document.getElementById('diskRead');
+  const diskWrite   = document.getElementById('diskWrite');
 
   function applyPetScale(pct) {
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
@@ -660,6 +711,8 @@
         if (cfg.disk_c_total_gb != null) diskCTotalGb = cfg.disk_c_total_gb;
         if (cfg.disk_all_total_gb != null) diskAllTotalGb = cfg.disk_all_total_gb;
         if (cfg.speed_unit) speedUnit = cfg.speed_unit;
+        if (cfg.show_net_arrows != null) showNetArrows = cfg.show_net_arrows;
+        if (cfg.show_disk_arrows != null) showDiskArrows = cfg.show_disk_arrows;
         renderPins();
       });
     }
@@ -719,6 +772,22 @@
   let speedUnit = 'MB';
   function applySpeedUnit(unit) {
     speedUnit = unit;
+  }
+
+  // Whether the net-arrow / disk-icon pairs render at all - settings.html
+  // toggles these independently so a user can drop either (or both) without
+  // losing the other. On by default; forcing 'shown' off immediately here
+  // (not just skipping it on the next poll) means a mid-flight toggle hides
+  // them right away instead of waiting up to 2s for the next pollHealth().
+  let showNetArrows = true;
+  let showDiskArrows = true;
+  function applyShowNetArrows(on) {
+    showNetArrows = !!on;
+    if (!showNetArrows) { netDown.classList.remove('shown'); netUp.classList.remove('shown'); }
+  }
+  function applyShowDiskArrows(on) {
+    showDiskArrows = !!on;
+    if (!showDiskArrows) { diskRead.classList.remove('shown'); diskWrite.classList.remove('shown'); }
   }
   function formatKbps(kbps) {
     const v = speedUnit === 'Mb' ? kbps * 8 : kbps;
@@ -864,10 +933,23 @@
   // 2.4s CSS default, a saturated link bounces near the 0.3s floor.
   function setNetArrow(el, kbps) {
     el.querySelector('.netLabel').textContent = formatSpeed(kbps);
-    if (kbps == null) { el.classList.remove('shown'); return; }
+    if (kbps == null || !showNetArrows) { el.classList.remove('shown'); return; }
     el.classList.add('shown');
     const dur = Math.max(0.3, 2.4 - 0.55 * Math.log2(1 + Math.max(0, kbps) / 32));
     el.querySelector('.arrowGlyph').style.setProperty('--arrow-dur', dur.toFixed(2) + 's');
+  }
+
+  // Disk icons: same idea as setNetArrow, rebased for disk's much bigger
+  // KB/s range (same rebasing setGauge/blinkExcitement already do for disk
+  // vs net) so a modest disk burst doesn't peg the animation at its fastest.
+  // Idle disk ambles at the 1.3s CSS default, a saturated drive settles near
+  // the 0.35s floor.
+  function setDiskIcon(el, kbps) {
+    el.querySelector('.netLabel').textContent = formatSpeed(kbps);
+    if (kbps == null || !showDiskArrows) { el.classList.remove('shown'); return; }
+    el.classList.add('shown');
+    const dur = Math.max(0.35, 1.3 - 0.28 * Math.log2(1 + Math.max(0, kbps) / 1024));
+    el.querySelector('.diskGlyph').style.setProperty('--disk-dur', dur.toFixed(2) + 's');
   }
 
   function pollHealth() {
@@ -881,6 +963,8 @@
         coneRoot.classList.remove('hot');
         setNetArrow(netDown, null);
         setNetArrow(netUp, null);
+        setDiskIcon(diskRead, null);
+        setDiskIcon(diskWrite, null);
         updateBlinkRates(null);
         updatePinUsage(null);
         return;
@@ -893,6 +977,8 @@
       drawGraph(h);
       setNetArrow(netDown, h.net_down_kbps);
       setNetArrow(netUp, h.net_up_kbps);
+      setDiskIcon(diskRead, h.disk_read_kbps);
+      setDiskIcon(diskWrite, h.disk_write_kbps);
       updateBlinkRates(h);
       updatePinUsage(h);
       const hot = h.cpu_pct != null && h.cpu_pct >= HOT_CPU_PCT;
