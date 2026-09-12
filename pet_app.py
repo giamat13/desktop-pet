@@ -772,6 +772,61 @@ def sync_desktop_visibility(hwnd, pet):
     threading.Thread(target=_watch, daemon=True).start()
 
 
+def keep_topmost_over_taskbar(hwnd, pet):
+    """
+    Re-assert HWND_TOPMOST periodically for a taskbar-mode pet.
+
+    Setting Form.TopMost (via window.on_top, in apply_window_mode) only
+    inserts the window into Windows' "topmost" band once; it says nothing
+    about *where* within that band it sits relative to other topmost
+    windows. The taskbar itself (Shell_TrayWnd) and the alt-tab switcher are
+    both topmost too, and Windows moves whichever one the user just
+    activated - by clicking the taskbar, or alt-tabbing - to the front of
+    that band, ahead of everything else in it. That is what exposes the
+    bottom of the pet (the part painted right against/over the taskbar,
+    e.g. the disk beneath the feet, when the pet is positioned with its feet
+    exactly on the taskbar): the pet is still "topmost", just no longer the
+    FRONT-most topmost window.
+
+    Unlike sync_desktop_visibility's HWND_TOP reassert above (which had to
+    be gated to desktop_is_showing() to avoid fighting ordinary foreground
+    apps), this is safe to run unconditionally and on a tight interval:
+    ordinary windows are never topmost, so they can never end up in front of
+    us no matter how often we do this. Only other topmost shell surfaces
+    (taskbar, alt-tab) can ever get in front, and correcting exactly that is
+    the point.
+    """
+    if hwnd in _watched_pets:  # toggling modes must not stack watchers
+        return
+    _watched_pets.add(hwnd)
+
+    def _watch():
+        user32 = USER32
+        HWND_TOPMOST = -1
+        SWP_NOSIZE = 0x0001
+        SWP_NOMOVE = 0x0002
+        SWP_NOACTIVATE = 0x0010
+        # post the request instead of sending it, so this thread never waits
+        # on the UI thread - see show_window_async().
+        SWP_ASYNCWINDOWPOS = 0x4000
+        flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS
+        try:
+            while True:
+                time.sleep(0.35)
+                try:
+                    if not user32.IsWindow(hwnd):
+                        return  # pet closed
+                    if load_config(pet).get("position", "taskbar") == "desktop":
+                        return  # switched to desktop mode - nothing left for this thread to do
+                    user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, flags)
+                except Exception:
+                    pass  # a transient shell state must never kill the watcher
+        finally:
+            _watched_pets.discard(hwnd)
+
+    threading.Thread(target=_watch, daemon=True).start()
+
+
 GWL_EXSTYLE = -20
 WS_EX_TOOLWINDOW = 0x00000080
 WS_EX_APPWINDOW = 0x00040000
@@ -875,6 +930,9 @@ def apply_window_mode(window, desktop, pet):
             if window.on_top != (not desktop):
                 window.on_top = not desktop
             if not desktop:
+                # Taskbar mode: keep winning the topmost band against the
+                # taskbar/alt-tab switcher - see keep_topmost_over_taskbar.
+                keep_topmost_over_taskbar(hwnd, pet)
                 return
 
             # Desktop mode: an ordinary window, shown only while the desktop is.
