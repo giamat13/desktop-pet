@@ -182,6 +182,9 @@
     ['battery', 'סוללה'],
     ['net_down', 'הורדה'],
     ['net_up', 'העלאה'],
+    ['disk_read', 'קריאה מדיסק'],
+    ['disk_write', 'כתיבה לדיסק'],
+    ['temp', 'חום מעבד'],
   ];
   [gaugeLeftSelect, gaugeRightSelect, graphSelect].forEach((sel) => {
     GAUGE_METRICS.forEach(([value, label]) => {
@@ -209,6 +212,7 @@
     ['cpu', 'מעבד (CPU)'],
     ['ram', 'זיכרון (RAM)'],
     ['net', 'העברת נתונים (רשת)'],
+    ['disk', 'פעילות דיסק'],
     ['window', 'החלפת חלון'],
   ];
   [blinkLeftSelect, blinkRightSelect].forEach((sel) => {

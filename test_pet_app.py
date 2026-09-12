@@ -581,37 +581,61 @@ def _test_sample_health_once():
             self.bytes_recv = recv
             self.bytes_sent = sent
 
+    class _FakeDisk:
+        def __init__(self, read, write):
+            self.read_bytes = read
+            self.write_bytes = write
+
     real_cpu = psutil.cpu_percent
     real_mem = psutil.virtual_memory
     real_batt = psutil.sensors_battery
     real_net = psutil.net_io_counters
+    real_disk = psutil.disk_io_counters
+    real_temp = getattr(psutil, "sensors_temperatures", None)
     try:
         psutil.cpu_percent = lambda interval=None: 41.0
         psutil.virtual_memory = lambda: _FakeMem()
         psutil.sensors_battery = lambda: None  # desktop: no battery at all
         psutil.net_io_counters = lambda: _FakeNet(2048, 1024)
+        psutil.disk_io_counters = lambda: _FakeDisk(4096, 2048)
+        psutil.sensors_temperatures = lambda: {"coretemp": [type("T", (), {"current": 55.5})()]}
 
         last_net = _FakeNet(0, 0)
-        sample, net, sampled_at = pet_app._sample_health_once(last_net, time.time() - 1)
+        last_disk = _FakeDisk(0, 0)
+        sample, net, disk, sampled_at = pet_app._sample_health_once(last_net, last_disk, time.time() - 1)
         assert sample["cpu_pct"] == 41.0 and sample["ram_pct"] == 62.5, sample
         assert sample["battery_pct"] is None and sample["on_battery"] is None, sample
         assert net.bytes_recv == 2048 and net.bytes_sent == 1024
+        assert abs(sample["disk_read_kbps"] - 4.0) < 0.5 and abs(sample["disk_write_kbps"] - 2.0) < 0.5, \
+            "4096/2048 bytes over ~1s must read as ~4/~2 KB/s"
+        assert sample["cpu_temp_c"] == 55.5, "coretemp sensor must be picked up"
+
+        psutil.sensors_temperatures = lambda: {}
+        sample, _, _, _ = pet_app._sample_health_once(net, disk, sampled_at)
+        assert sample["cpu_temp_c"] is None, "no matching sensor group must read as None, not 0"
 
         psutil.sensors_battery = lambda: _FakeBattery(77, False)
-        sample, net, _ = pet_app._sample_health_once(net, sampled_at)
+        sample, net, disk, _ = pet_app._sample_health_once(net, disk, sampled_at)
         assert sample["battery_pct"] == 77 and sample["on_battery"] is True, \
             "unplugged must report on_battery True"
         assert sample["net_down_kbps"] == 0 and sample["net_up_kbps"] == 0, \
             "identical counters since the last sample must mean zero throughput"
+        assert sample["disk_read_kbps"] == 0 and sample["disk_write_kbps"] == 0, \
+            "identical disk counters since the last sample must mean zero throughput"
 
         psutil.sensors_battery = lambda: _FakeBattery(100, True)
-        sample, _, _ = pet_app._sample_health_once(net, sampled_at)
+        sample, _, _, _ = pet_app._sample_health_once(net, disk, sampled_at)
         assert sample["on_battery"] is False, "plugged in must report on_battery False"
     finally:
         psutil.cpu_percent = real_cpu
         psutil.virtual_memory = real_mem
         psutil.sensors_battery = real_batt
         psutil.net_io_counters = real_net
+        psutil.disk_io_counters = real_disk
+        if real_temp is None:
+            del psutil.sensors_temperatures
+        else:
+            psutil.sensors_temperatures = real_temp
 
     # get_system_health() must stay gated to the system pet, same as get_media().
     assert pet_app.Api(1080, lambda: None, "claude").get_system_health() is None

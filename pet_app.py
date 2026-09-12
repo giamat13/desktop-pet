@@ -1330,6 +1330,8 @@ _health_lock = threading.Lock()
 _health_cache = {
     "cpu_pct": None, "ram_pct": None, "battery_pct": None, "on_battery": None,
     "net_down_kbps": None, "net_up_kbps": None,
+    "disk_read_kbps": None, "disk_write_kbps": None,
+    "cpu_temp_c": None,
     # Running count of foreground-window changes, for the "window" blink
     # metric. A count rather than a timestamp so a 2s JS poll can detect a
     # switch that happened and ended between two polls just by seeing the
@@ -1358,7 +1360,30 @@ def _foreground_window_changed(last_fg):
     return (last_fg is not None and fg != last_fg), fg
 
 
-def _sample_health_once(last_net, last_t):
+def _read_cpu_temp():
+    """
+    Best-effort CPU temperature in Celsius via psutil.sensors_temperatures().
+    Windows has no built-in provider for this (psutil returns {} there
+    without a vendor tool like OpenHardwareMonitor running), so None is the
+    common case there - callers already treat it like battery_pct, falling
+    back to the CPU% proxy rather than showing a missing gauge as zero.
+    Picks the first CPU-ish sensor group present (coretemp/k10temp on Linux,
+    cpu_thermal on a Pi); anything else on the box (NVMe, WiFi chip) is
+    exactly as valid a "temp" reading, but this is the CPU-specific gauge.
+    """
+    import psutil
+    try:
+        groups = psutil.sensors_temperatures()
+    except Exception:
+        return None
+    for name in ("coretemp", "k10temp", "cpu_thermal", "cpu-thermal"):
+        entries = groups.get(name)
+        if entries:
+            return entries[0].current
+    return None
+
+
+def _sample_health_once(last_net, last_disk, last_t):
     """
     One real sample: blocks ~1s on psutil.cpu_percent(interval=1). Split out
     of _health_sampler_loop() so it can be unit-tested synchronously, with
@@ -1373,8 +1398,9 @@ def _sample_health_once(last_net, last_t):
     including the first - at the cost of living on a thread the JS bridge
     never touches directly.
 
-    Returns (sample_dict, net_counters, sampled_at) - the last two feed back
-    in as last_net/last_t for the next call, to derive net throughput.
+    Returns (sample_dict, net_counters, disk_counters, sampled_at) - the last
+    three feed back in as last_net/last_disk/last_t for the next call, to
+    derive net/disk throughput.
     """
     import psutil
     cpu_pct = psutil.cpu_percent(interval=1)  # blocks the calling thread only
@@ -1382,6 +1408,7 @@ def _sample_health_once(last_net, last_t):
     battery = psutil.sensors_battery()
     now = time.time()
     net = psutil.net_io_counters()
+    disk = psutil.disk_io_counters()
     dt = max(now - last_t, 0.001)
     down_kbps = (net.bytes_recv - last_net.bytes_recv) / dt / 1024
     up_kbps = (net.bytes_sent - last_net.bytes_sent) / dt / 1024
@@ -1392,19 +1419,26 @@ def _sample_health_once(last_net, last_t):
         "on_battery": (not battery.power_plugged) if battery else None,
         "net_down_kbps": max(0.0, down_kbps),
         "net_up_kbps": max(0.0, up_kbps),
+        "cpu_temp_c": _read_cpu_temp(),
     }
-    return sample, net, now
+    if disk is not None and last_disk is not None:
+        read_kbps = (disk.read_bytes - last_disk.read_bytes) / dt / 1024
+        write_kbps = (disk.write_bytes - last_disk.write_bytes) / dt / 1024
+        sample["disk_read_kbps"] = max(0.0, read_kbps)
+        sample["disk_write_kbps"] = max(0.0, write_kbps)
+    return sample, net, disk, now
 
 
 def _health_sampler_loop():
     """Runs forever on its own thread, one real sample per second."""
     import psutil
     last_net = psutil.net_io_counters()
+    last_disk = psutil.disk_io_counters()  # None on some restricted/virtual setups
     last_t = time.time()
     last_fg = None
     while True:
         try:
-            sample, last_net, last_t = _sample_health_once(last_net, last_t)
+            sample, last_net, last_disk, last_t = _sample_health_once(last_net, last_disk, last_t)
             changed, last_fg = _foreground_window_changed(last_fg)
             with _health_lock:
                 _health_cache.update(sample)
@@ -1764,7 +1798,10 @@ class SettingsApi:
 
     # Underscore-prefixed: see Api.__init__ on why nothing non-JS-facing here
     # can be a bare public attribute.
-    _ALLOWED_GAUGE_METRICS = {"cpu", "ram", "battery", "net_down", "net_up"}
+    _ALLOWED_GAUGE_METRICS = {
+        "cpu", "ram", "battery", "net_down", "net_up",
+        "disk_read", "disk_write", "temp",
+    }
 
     def set_gauge_metric(self, side, metric):
         """
@@ -1785,10 +1822,11 @@ class SettingsApi:
         if self._pet_window:
             self._pet_window.evaluate_js(f"applyGraphMetric('{metric}')")
 
-    # "net" folds net_down/net_up into one choice - the blink rate only needs
-    # "is a transfer happening", not which direction. "window" isn't a 0-100
-    # gauge value like the others; JS reads it off window_switches instead.
-    _ALLOWED_BLINK_METRICS = {"cpu", "ram", "net", "window"}
+    # "net"/"disk" each fold their read+write pair into one choice - the blink
+    # rate only needs "is a transfer happening", not which direction. "window"
+    # isn't a 0-100 gauge value like the others; JS reads it off
+    # window_switches instead.
+    _ALLOWED_BLINK_METRICS = {"cpu", "ram", "net", "disk", "window"}
 
     def set_blink_metric(self, side, metric):
         """

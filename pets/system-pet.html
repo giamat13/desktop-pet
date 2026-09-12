@@ -614,12 +614,20 @@
   // the ring caps at NET_GAUGE_MAX_KBPS (a saturated home connection), the
   // text always shows the real, uncapped speed.
   const NET_GAUGE_MAX_KBPS = 5000; // ~40 Mbps -> ring reads "full"
+  // Disk throughput saturates a much bigger number than a home connection -
+  // ~100MB/s is a comfortable "full ring" mark for a spinning/SATA-ish drive
+  // without pegging the gauge on every NVMe burst.
+  const DISK_GAUGE_MAX_KBPS = 100000;
+  const TEMP_GAUGE_MAX_C = 100;
   const METRIC_META = {
-    cpu:      { label: 'CPU', max: 100 },
-    ram:      { label: 'RAM', max: 100 },
-    battery:  { label: 'BAT', max: 100 },
-    net_down: { label: 'DN',  max: NET_GAUGE_MAX_KBPS },
-    net_up:   { label: 'UP',  max: NET_GAUGE_MAX_KBPS },
+    cpu:        { label: 'CPU', max: 100 },
+    ram:        { label: 'RAM', max: 100 },
+    battery:    { label: 'BAT', max: 100 },
+    net_down:   { label: 'DN',  max: NET_GAUGE_MAX_KBPS },
+    net_up:     { label: 'UP',  max: NET_GAUGE_MAX_KBPS },
+    disk_read:  { label: 'DR',  max: DISK_GAUGE_MAX_KBPS },
+    disk_write: { label: 'DW',  max: DISK_GAUGE_MAX_KBPS },
+    temp:       { label: 'TMP', max: TEMP_GAUGE_MAX_C },
   };
 
   function metricRaw(h, key) {
@@ -629,6 +637,9 @@
       case 'battery': return h.battery_pct;
       case 'net_down': return h.net_down_kbps;
       case 'net_up': return h.net_up_kbps;
+      case 'disk_read': return h.disk_read_kbps;
+      case 'disk_write': return h.disk_write_kbps;
+      case 'temp': return h.cpu_temp_c;
       default: return null;
     }
   }
@@ -647,7 +658,8 @@
   }
 
   function formatMetric(key, raw) {
-    if (key === 'net_down' || key === 'net_up') return formatKbps(raw);
+    if (key === 'net_down' || key === 'net_up' || key === 'disk_read' || key === 'disk_write') return formatKbps(raw);
+    if (key === 'temp') return Math.round(raw) + '°C';
     return Math.round(raw) + '%';
   }
 
@@ -664,11 +676,24 @@
     g.style.opacity = '1';
   }
 
-  // die glow is a straight function of CPU%, so the body itself is the
-  // primary readout and the ring gauge is only the precise number
-  function setLoad(cpu) {
-    if (cpu == null) { dieHeat.style.opacity = '0'; return; }
-    const c = Math.max(0, Math.min(100, cpu));
+  // Real sensor temp (WARM/HOT in °C) when psutil can read one - Windows
+  // usually can't without a vendor tool, so this stays the exception, not
+  // the rule. CPU% remains the fallback proxy, same thresholds as before.
+  const WARM_TEMP_C = 55;
+  const HOT_TEMP_C  = 80;
+
+  // die glow tracks real CPU temp when the sensor is available, falling back
+  // to CPU% as a proxy otherwise - so the body is the primary readout either
+  // way, and the ring gauge is only the precise number
+  function setLoad(h) {
+    if (!h || h.cpu_pct == null) { dieHeat.style.opacity = '0'; return; }
+    if (h.cpu_temp_c != null) {
+      const t = Math.max(0, Math.min(HOT_TEMP_C, h.cpu_temp_c));
+      dieHeat.style.opacity =
+        (Math.max(0, t - WARM_TEMP_C) / (HOT_TEMP_C - WARM_TEMP_C) * 0.92).toFixed(3);
+      return;
+    }
+    const c = Math.max(0, Math.min(100, h.cpu_pct));
     dieHeat.style.opacity =
       (Math.max(0, c - WARM_CPU_PCT) / (100 - WARM_CPU_PCT) * 0.92).toFixed(3);
   }
@@ -732,6 +757,10 @@
         const kbps = Math.max(h.net_down_kbps || 0, h.net_up_kbps || 0);
         return clamp01(Math.log2(1 + kbps / 64) / 8); // same log curve as the arrow speed, cheap transfers barely register
       }
+      case 'disk': {
+        const kbps = Math.max(h.disk_read_kbps || 0, h.disk_write_kbps || 0);
+        return clamp01(Math.log2(1 + kbps / 1024) / 8); // same log shape as 'net', rebased for disk's much bigger KB/s range
+      }
       case 'window': {
         // Not a gauge value - a brief speed-up right when the foreground
         // window actually changes, calm otherwise. window_switches is a
@@ -786,7 +815,7 @@
       }
       setGauge('gaugeLeft', leftMetric, metricRaw(h, leftMetric));
       setGauge('gaugeRight', rightMetric, metricRaw(h, rightMetric));
-      setLoad(h.cpu_pct);
+      setLoad(h);
       drawGraph(h);
       setNetArrow(netDown, h.net_down_kbps);
       setNetArrow(netUp, h.net_up_kbps);
