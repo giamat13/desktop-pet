@@ -247,11 +247,37 @@
   #bambuPetSvg.state-change #mouth {
     animation: stateReaction 620ms cubic-bezier(.2,.8,.25,1);
   }
+  #bambuPetSvg.finish-reaction #face,
+  #bambuPetSvg.finish-reaction #mouth {
+    animation: finishReaction 900ms cubic-bezier(.2,.8,.25,1);
+  }
+  #printer-root.progress-hop {
+    animation: progressHop 480ms cubic-bezier(.2,.8,.25,1);
+  }
+  #shadow.progress-hop {
+    animation: progressShadow 480ms ease-out;
+  }
   @keyframes stateReaction {
     0% { transform: translateY(0) scale(1); }
     38% { transform: translateY(-3px) scale(1.16); }
     72% { transform: translateY(1px) scale(0.96); }
     100% { transform: translateY(0) scale(1); }
+  }
+  @keyframes finishReaction {
+    0%, 100% { transform: translateY(0) scale(1); }
+    24% { transform: translateY(-5px) scale(1.2); }
+    48% { transform: translateY(0) scale(0.96); }
+    72% { transform: translateY(-3px) scale(1.12); }
+  }
+  @keyframes progressHop {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    35% { transform: translateY(-7px) scale(0.98, 1.03); }
+    68% { transform: translateY(0) scale(1.03, 0.97); }
+  }
+  @keyframes progressShadow {
+    0%, 100% { transform: scaleX(1); opacity: 0.32; }
+    35% { transform: scaleX(0.82); opacity: 0.2; }
+    68% { transform: scaleX(1.06); opacity: 0.36; }
   }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
@@ -455,6 +481,10 @@
   const layerFill = document.getElementById('layerFill');
   let previousStateKey = null;
   let stateReactionTimer = null;
+  let previousMood = null;
+  let previousPercent = null;
+  let previousLayer = null;
+  let progressHopTimer = null;
 
   function applyPetScale(pct) {
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
@@ -512,7 +542,7 @@
       expression = 'focused';
     } else if (mood === 'run' && Number.isFinite(percent) && percent <= 5) {
       expression = 'worried';
-    } else if (mood === 'run' && percent >= 95) {
+    } else if (mood === 'run' && percent >= 90) {
       expression = 'excited';
     } else if (mood === 'run') {
       expression = 'happy';
@@ -522,14 +552,20 @@
       mood,
       s && s.connected ? 'connected' : 'disconnected',
       s && s.has_data ? 'data' : 'no-data',
-      s && s.warming ? 'warming' : 'ready'
+      s && s.warming ? 'warming' : 'ready',
+      mood === 'run' && Number.isFinite(percent) && percent >= 90 && percent < 100
+        ? 'near-finish' : 'not-near-finish'
     ].join(':');
     if (previousStateKey !== null && stateKey !== previousStateKey) {
       svg.classList.remove('state-change');
       void svg.getBoundingClientRect();
-      svg.classList.add('state-change');
+      const nearFinish = mood === 'run' && Number.isFinite(percent) && percent >= 90 && percent < 100;
+      svg.classList.toggle('finish-reaction', nearFinish);
+      svg.classList.toggle('state-change', !nearFinish);
       clearTimeout(stateReactionTimer);
-      stateReactionTimer = setTimeout(() => svg.classList.remove('state-change'), 700);
+      stateReactionTimer = setTimeout(() => {
+        svg.classList.remove('state-change', 'finish-reaction');
+      }, nearFinish ? 950 : 700);
     }
     previousStateKey = stateKey;
 
@@ -561,6 +597,26 @@
     const totalLayers = s && s.total_layers != null ? Number(s.total_layers) : NaN;
     const hasLayerProgress = s && s.has_data && ['run', 'pause'].includes(mood)
       && Number.isFinite(layer) && Number.isFinite(totalLayers) && totalLayers > 0;
+    const crossedMilestone = mood === 'run' && previousMood === 'run'
+      && Number.isFinite(percent) && Number.isFinite(previousPercent)
+      && [25, 50, 75].some((milestone) => previousPercent < milestone && percent >= milestone);
+    const changedLayer = mood === 'run' && hasLayerProgress
+      && previousLayer !== null && Math.round(layer) > previousLayer;
+    if (crossedMilestone || changedLayer) {
+      printerRoot.classList.remove('progress-hop');
+      shadow.classList.remove('progress-hop');
+      void printerRoot.getBoundingClientRect();
+      printerRoot.classList.add('progress-hop');
+      shadow.classList.add('progress-hop');
+      clearTimeout(progressHopTimer);
+      progressHopTimer = setTimeout(() => {
+        printerRoot.classList.remove('progress-hop');
+        shadow.classList.remove('progress-hop');
+      }, 500);
+    }
+    previousPercent = Number.isFinite(percent) ? percent : null;
+    previousLayer = hasLayerProgress ? Math.round(layer) : null;
+    previousMood = mood;
     const showFirstLayer = hasLayerProgress && Math.round(layer) === 1;
     firstLayerIndicator.classList.toggle('visible', showFirstLayer);
     layerBadge.classList.toggle('visible', hasLayerProgress && !showFirstLayer);
