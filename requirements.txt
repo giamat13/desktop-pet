@@ -16,3 +16,5 @@ comtypes
 # System-health pet: cross-platform CPU/RAM/battery reads without hand-rolled
 # WMI/ctypes for each metric.
 psutil
+# Bambu Lab printer pet: the printer's MQTT report stream (cloud or LAN).
+paho-mqtt

@@ -53,6 +53,40 @@
     cursor: pointer;
   }
   #save:active { transform: scale(0.98); }
+  /* Same reason as .row[hidden] above: .fields and .field set display. */
+  [hidden] { display: none !important; }
+  .fields { display: flex; flex-direction: column; gap: 6px; }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field > span { font-size: 11px; color: #B94A24; }
+  .bambu-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    border: 2px solid #D85A30;
+    border-radius: 6px;
+    background: #FFF7F0;
+    color: #4A1B0C;
+    font-family: inherit;
+    font-size: 12px;
+    direction: ltr;
+    text-align: left;
+  }
+  .bambu-actions { display: flex; gap: 8px; }
+  .bambu-btn {
+    flex: 1;
+    padding: 8px;
+    border: 2px solid #D2703C;
+    border-radius: 8px;
+    background: #D2703C;
+    color: #FFF7F0;
+    font-family: inherit;
+    font-weight: bold;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .bambu-btn.secondary { background: #FFF7F0; color: #B94A24; border-color: #D85A30; }
+  .bambu-btn:disabled { opacity: 0.45; cursor: default; }
+  #bambuStatus { font-size: 12px; color: #4A1B0C; }
 </style>
 </head>
 <body>
@@ -152,6 +186,37 @@
     </div>
   </div>
 
+  <!-- Bambu pet only: the printer connection. Hidden until get_pet_config() names
+       the pet. The form is filled from get_bambu_connection(); the status line
+       keeps refreshing while this window is open. -->
+  <div class="row" id="bambuRow" hidden>
+    <span class="label">חיבור למדפסת</span>
+    <div class="modes" id="bambuModes">
+      <button data-bambu-mode="cloud">ענן (חשבון Bambu)</button>
+      <button data-bambu-mode="local">LAN (ברשת המקומית)</button>
+    </div>
+    <label class="field"><span>מספר סידורי של המדפסת (Serial)</span>
+      <input id="bambuSerial" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
+    <div id="bambuCloudFields" class="fields">
+      <label class="field"><span>UID של המשתמש</span>
+        <input id="bambuUid" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span>Token</span>
+        <input id="bambuToken" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div id="bambuLocalFields" class="fields">
+      <label class="field"><span>כתובת IP של המדפסת</span>
+        <input id="bambuIp" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span>קוד גישה (מסך המדפסת)</span>
+        <input id="bambuCode" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div class="bambu-actions">
+      <button class="bambu-btn secondary" id="bambuImport">ייבוא מ-bambu-widget</button>
+      <button class="bambu-btn" id="bambuSave">שמירה וחיבור מחדש</button>
+    </div>
+    <span class="value" id="bambuImportHint"></span>
+    <span id="bambuStatus"></span>
+  </div>
+
   <!-- Every pet gets this - not gated behind cfg.pet like the rows above.
        Hiding closes this window's only path back (middle-click opens settings
        from the pet itself, and a hidden pet can't be clicked), so un-hide
@@ -220,6 +285,19 @@
   const hiddenButtons     = [...document.querySelectorAll('#hiddenModes button')];
   const saveBtn        = document.getElementById('save');
   const otherPetsList  = document.getElementById('otherPetsList');
+  const bambuRow          = document.getElementById('bambuRow');
+  const bambuButtons      = [...document.querySelectorAll('#bambuModes button')];
+  const bambuCloudFields  = document.getElementById('bambuCloudFields');
+  const bambuLocalFields  = document.getElementById('bambuLocalFields');
+  const bambuSerial       = document.getElementById('bambuSerial');
+  const bambuUid          = document.getElementById('bambuUid');
+  const bambuToken        = document.getElementById('bambuToken');
+  const bambuIp           = document.getElementById('bambuIp');
+  const bambuCode         = document.getElementById('bambuCode');
+  const bambuImportBtn    = document.getElementById('bambuImport');
+  const bambuSaveBtn      = document.getElementById('bambuSave');
+  const bambuImportHint   = document.getElementById('bambuImportHint');
+  const bambuStatus       = document.getElementById('bambuStatus');
 
   // System pet only - what each corner gauge can show instead of the fixed
   // CPU/RAM pair. Kept in sync with SettingsApi._ALLOWED_GAUGE_METRICS in
@@ -415,6 +493,68 @@
     modeButtons.forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   }
 
+  // Bambu pet only - printer connection. The form keeps what the user typed:
+  // only the status line is refreshed by the timer, never the inputs.
+  let bambuMode = 'cloud';
+  let bambuTimer = null;
+
+  function setBambuMode(mode) {
+    bambuMode = mode === 'local' ? 'local' : 'cloud';
+    bambuButtons.forEach(b => b.classList.toggle('active', b.dataset.bambuMode === bambuMode));
+    bambuCloudFields.hidden = bambuMode !== 'cloud';
+    bambuLocalFields.hidden = bambuMode !== 'local';
+  }
+
+  function renderBambuStatus(s) {
+    if (!s.configured) {
+      bambuStatus.textContent = 'לא מחובר: עדיין אין הגדרות. מלאו את הפרטים ושמרו, או ייבאו מ-bambu-widget.';
+    } else if (s.connected) {
+      bambuStatus.textContent = 'מחובר למדפסת.';
+    } else if (s.error) {
+      bambuStatus.textContent = s.error;
+    } else {
+      bambuStatus.textContent = 'מתחבר…';
+    }
+  }
+
+  function fillBambuForm(s) {
+    setBambuMode(s.mode);
+    bambuSerial.value = s.serial || '';
+    bambuUid.value = s.uid || '';
+    bambuToken.value = s.token || '';
+    bambuIp.value = s.ip || '';
+    bambuCode.value = s.code || '';
+    bambuImportBtn.disabled = !s.widget_available;
+    bambuImportHint.textContent = s.widget_available ? '' : 'לא נמצאו הגדרות של bambu-widget במחשב הזה.';
+    renderBambuStatus(s);
+  }
+
+  function refreshBambuStatus() {
+    if (bambuRow.hidden || !api() || !api().get_bambu_connection) return;
+    api().get_bambu_connection().then((s) => { if (s) renderBambuStatus(s); });
+  }
+
+  function loadBambu() {
+    if (!api() || !api().get_bambu_connection) return;
+    api().get_bambu_connection().then((s) => { if (s) fillBambuForm(s); });
+    if (!bambuTimer) bambuTimer = setInterval(refreshBambuStatus, 2000);
+  }
+
+  bambuButtons.forEach(b => b.addEventListener('click', () => setBambuMode(b.dataset.bambuMode)));
+
+  bambuSaveBtn.addEventListener('click', () => {
+    if (!api() || !api().set_bambu_connection) return;
+    bambuStatus.textContent = 'שומר…';
+    api().set_bambu_connection(bambuMode, bambuUid.value, bambuToken.value,
+                               bambuSerial.value, bambuIp.value, bambuCode.value)
+         .then((s) => { if (s) fillBambuForm(s); });
+  });
+
+  bambuImportBtn.addEventListener('click', () => {
+    if (!api() || !api().import_bambu_widget) return;
+    api().import_bambu_widget().then((s) => { if (s) fillBambuForm(s); });
+  });
+
   function seed(cfg) {
     cfg = cfg || {};
     const margin = parseInt(cfg.margin, 10);
@@ -457,6 +597,8 @@
     setNetArrowsShown(cfg.show_net_arrows === false ? '0' : '1');
     diskArrowsRow.hidden = cfg.pet !== 'system';
     setDiskArrowsShown(cfg.show_disk_arrows === false ? '0' : '1');
+    bambuRow.hidden = cfg.pet !== 'bambu';
+    if (!bambuRow.hidden) loadBambu();
     setHiddenState(cfg.hidden ? '1' : '0');
   }
 

@@ -664,6 +664,157 @@ def _test_sample_health_once():
     print("OK: _sample_health_once self-check passed")
 
 
+def _test_bambu_status():
+    """
+    The Bambu pet's pure parts: partial MQTT reports must merge into the last
+    known state (not replace it), non-print payloads and garbage must be
+    ignored, gcode_state must map to the right label and mood, progress must be
+    clamped to 0-100, and remaining minutes must read as "1h 12m". Also the
+    not-configured path and the gating to the bambu pet. No printer, no network.
+    """
+    data = {}
+    assert pet_app.bambu_apply_report(data, b'{"print": {"gcode_state": "RUNNING", "mc_percent": 40}}')
+    assert pet_app.bambu_apply_report(data, b'{"print": {"mc_percent": 67, "mc_remaining_time": 72}}')
+    assert data == {"gcode_state": "RUNNING", "mc_percent": 67, "mc_remaining_time": 72}, \
+        "partial reports must merge into the last known state"
+    assert not pet_app.bambu_apply_report(data, b'{"info": {"version": "1"}}'), \
+        "payloads without a print report are ignored"
+    assert not pet_app.bambu_apply_report(data, b"not json"), "garbage must not raise"
+    assert data["mc_percent"] == 67
+
+    s = pet_app.bambu_summary(True, data, True, "")
+    assert s["mood"] == "run" and s["label"] == "מדפיס", s
+    assert s["percent"] == 67.0 and s["remaining_text"] == "1h 12m", s
+
+    s = pet_app.bambu_summary(True, {"gcode_state": "FAILED", "mc_percent": 150}, True, "")
+    assert s["mood"] == "fail" and s["percent"] == 100.0, "progress must clamp to 100"
+
+    assert pet_app.bambu_summary(True, {"gcode_state": "FINISH", "mc_percent": 100}, True, "")["mood"] == "done"
+    assert pet_app.bambu_summary(True, {"gcode_state": "PAUSE", "mc_percent": 57}, True, "")["mood"] == "pause"
+    assert pet_app.bambu_summary(True, {"gcode_state": "PREPARE", "mc_percent": 0}, True, "")["mood"] == "run"
+
+    s = pet_app.bambu_summary(True, {}, False, "Login failed")
+    assert s["configured"] and not s["has_data"] and s["error"] == "Login failed", s
+    assert pet_app.bambu_summary(False, {}, False, "")["configured"] is False
+
+    assert pet_app.bambu_fmt_remaining(45) == "45m"
+    assert pet_app.bambu_fmt_remaining(0) == "0m"
+    assert pet_app.bambu_fmt_remaining(None) == "--"
+
+    assert pet_app.Api(1080, lambda: None, "claude").get_bambu_status() is None, \
+        "get_bambu_status() must stay gated to the bambu pet"
+
+    print("OK: bambu status self-check passed")
+
+
+def _test_bambu_import_and_reconnect():
+    """
+    The Bambu pet's connection. bambu-widget's saved login is imported when the
+    pet has none; a working connection is never overwritten by the automatic
+    import (only the settings button forces it); an incomplete widget config is
+    ignored; and changing the connection stops the old MQTT client and starts a
+    new one, while nothing starts without a usable connection. The MQTT client
+    is replaced by a fake, so no network is used.
+    """
+    tmp = tempfile.mkdtemp(prefix="claude_bambu_selfcheck_")
+    old_appdata = os.environ.get("APPDATA")
+    old_config_path = pet_app.CONFIG_PATH
+    pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+    os.environ["APPDATA"] = tmp  # bambu-widget keeps its config under %APPDATA%
+    widget_file = os.path.join(tmp, "bambu-widget", "config.json")
+    os.makedirs(os.path.dirname(widget_file))
+
+    def write_widget(data):
+        with open(widget_file, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    class FakeClient:
+        def __init__(self, gen):
+            self.gen = gen
+
+        def loop_stop(self):
+            stopped.append(self.gen)
+
+        def disconnect(self):
+            pass
+
+    started, stopped = [], []
+
+    def fake_start(cfg, gen):
+        started.append(gen)
+        return FakeClient(gen)
+
+    real_start = pet_app.start_bambu_mqtt
+    try:
+        write_widget({"mode": "cloud", "serial": "S1", "token": "T1", "uid": "123", "x": 1, "y": 2})
+        assert pet_app._bambu_widget_connection() == \
+            {"mode": "cloud", "serial": "S1", "token": "T1", "uid": "123"}
+
+        assert pet_app.import_bambu_widget_config() is True
+        assert pet_app.load_config("bambu")["uid"] == "123"
+        assert pet_app.import_bambu_widget_config() is False, "a working connection is not overwritten"
+
+        pet_app.update_config("bambu", uid="999")
+        assert pet_app.import_bambu_widget_config() is False
+        assert pet_app.load_config("bambu")["uid"] == "999", "the user's value must survive the auto import"
+        assert pet_app.import_bambu_widget_config(force=True) is True
+        assert pet_app.load_config("bambu")["uid"] == "123", "the settings button forces the import"
+
+        write_widget({"mode": "cloud", "serial": "S1"})  # no token: not usable
+        assert pet_app._bambu_widget_connection() is None
+        assert pet_app.import_bambu_widget_config(force=True) is False
+
+        os.remove(widget_file)
+        assert pet_app._bambu_widget_connection() is None
+
+        # The poll path: with no connection of its own, the pet imports the widget's
+        # and starts one client for it.
+        pet_app.start_bambu_mqtt = fake_start
+        pet_app._bambu_key, pet_app._bambu_client = None, None
+        pet_app.update_config("bambu", mode=None, uid=None, token=None, serial=None)
+        write_widget({"mode": "cloud", "serial": "S1", "token": "T1", "uid": "123"})
+        s = pet_app.read_bambu_status()
+        assert s["configured"] is True, s
+        assert started == [pet_app._bambu_gen], "one client for this connection"
+
+        # The same settings on the next poll: nothing restarts.
+        pet_app.read_bambu_status()
+        assert len(started) == 1
+
+        # A changed token restarts the client and stops the old one.
+        first = started[-1]
+        pet_app.update_config("bambu", token="T2")
+        pet_app.read_bambu_status()
+        assert stopped == [first], "changed settings must stop the old client"
+        assert len(started) == 2 and started[-1] == pet_app._bambu_gen
+
+        # Settings cleared: the old client stops and nothing new starts.
+        # (The widget file goes too, or the poll would import it again.)
+        os.remove(widget_file)
+        pet_app.update_config("bambu", token="")
+        s = pet_app.read_bambu_status()
+        assert s["configured"] is False, s
+        assert len(started) == 2, "unconfigured: nothing starts"
+        assert stopped[-1] == started[-1], "unconfigured: the running client stops"
+        assert pet_app._bambu_client is None
+
+        # The settings window's methods are gated to the bambu pet.
+        api = pet_app.SettingsApi(None, 1080, "claude")
+        assert api.get_bambu_connection() is None
+        assert api.set_bambu_connection("cloud", "1", "2", "3", "", "") is None
+        assert api.import_bambu_widget() is None
+    finally:
+        pet_app.start_bambu_mqtt = real_start
+        pet_app._bambu_key, pet_app._bambu_client = None, None
+        pet_app.CONFIG_PATH = old_config_path
+        if old_appdata is None:
+            os.environ.pop("APPDATA", None)
+        else:
+            os.environ["APPDATA"] = old_appdata
+
+    print("OK: bambu import and reconnect self-check passed")
+
+
 def main():
     _test_task_state()
     _test_read_usage()
@@ -673,6 +824,8 @@ def main():
     _test_read_vscode_dirty()
     _test_read_discord_voice_state()
     _test_sample_health_once()
+    _test_bambu_status()
+    _test_bambu_import_and_reconnect()
     _test_desktop_is_showing_no_hang()
 
     assert sys.platform == "win32", "the rest of this self-check only applies on Windows"

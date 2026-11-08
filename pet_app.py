@@ -8,6 +8,7 @@ import os
 import sys
 import glob
 import json
+import ssl
 import time
 import ctypes
 import subprocess
@@ -27,6 +28,7 @@ PETS = {
     "spotify": "pets/spotify-pet.html",
     "discord": "pets/discord-pet.html",
     "system": "pets/system-pet.html",
+    "bambu": "pets/bambu-pet.html",
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
@@ -531,6 +533,20 @@ def launch_discord():
         os.startfile("discord")
     except Exception as exc:
         log("launch_discord fallback failed:", exc)
+
+
+def launch_bambu_studio():
+    """Open Bambu Studio, or focus the running instance (the app the bambu pet fronts for)."""
+    path = os.path.expandvars(r"%ProgramFiles%\Bambu Studio\bambu-studio.exe")
+    if not os.path.isfile(path):
+        log("launch_bambu_studio: not found at", path)
+        return
+    if activate_app_window(path):
+        return
+    try:
+        os.startfile(path)
+    except Exception as exc:
+        log("launch_bambu_studio failed:", exc)
 
 
 _watched_pets = set()  # hwnds that already have a sync_desktop_visibility watcher
@@ -1390,6 +1406,344 @@ def read_discord_voice_state():
         return None  # this key doesn't exist on this Windows build/edition
 
 
+# ---------------------------------------------------------------- Bambu Lab printer
+# Logic ported from the bambu-widget project (C:\Users\thefu\code\bambu-widget\
+# main.py): the same MQTT report stream from the printer, the same gcode_state
+# names, the same cloud login. The widget's tkinter window is not used - this
+# pet only needs the numbers.
+#
+# Setup is a one-off console command, because a pet launched with pythonw has
+# no console to ask questions on:
+#     python pet_app.py bambu-login    # Bambu account (cloud mode)
+#     python pet_app.py bambu-local    # LAN Only Mode + access code
+# The answers go into this pet's section of config.json. Restart the pet after
+# changing them: the MQTT connection is opened once per run.
+BAMBU_API = "https://api.bambulab.com"
+BAMBU_CLOUD_HOST = "us.mqtt.bambulab.com"
+BAMBU_MQTT_PORT = 8883
+
+# gcode_state -> (Hebrew label, pet mood). Same keys as bambu-widget's STATES.
+BAMBU_STATES = {
+    "RUNNING": ("מדפיס", "run"),
+    "PREPARE": ("מתכונן", "run"),
+    "SLICING": ("מתכונן", "run"),
+    "INIT": ("מתכונן", "run"),
+    "PAUSE": ("מושהה", "pause"),
+    "FINISH": ("הסתיים", "done"),
+    "FAILED": ("נכשל", "fail"),
+    "IDLE": ("פנוי", "idle"),
+}
+
+_bambu_lock = threading.Lock()
+_bambu_data = {}  # the printer's "print" report, merged across partial updates
+_bambu_status = {"connected": False, "error": ""}
+_bambu_key = None     # connection settings the running client was started with
+_bambu_client = None  # the running paho client, if any
+_bambu_gen = 0        # bumped on every reconnect; callbacks from an older client are ignored
+BAMBU_CONN_KEYS = ("mode", "uid", "token", "serial", "host", "ip", "code")
+
+
+def _bambu_ready(cfg):
+    if cfg.get("mode") == "cloud":
+        return all(cfg.get(k) for k in ("uid", "token", "serial"))
+    if cfg.get("mode") == "local":
+        return all(cfg.get(k) for k in ("ip", "serial", "code"))
+    return False
+
+
+def _bambu_widget_config_path():
+    """Where bambu-widget keeps its settings: %APPDATA%/bambu-widget/config.json."""
+    base = os.getenv("APPDATA") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "bambu-widget", "config.json")
+
+
+def _bambu_widget_connection():
+    """The connection bambu-widget saved on this machine, or None."""
+    try:
+        with open(_bambu_widget_config_path(), encoding="utf-8-sig") as f:
+            src = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(src, dict) or not _bambu_ready(src):
+        return None
+    return {k: src[k] for k in BAMBU_CONN_KEYS if k in src}
+
+
+def import_bambu_widget_config(force=False):
+    """
+    Copy bambu-widget's saved connection into this pet. Without `force` it only
+    runs while this pet has no working connection of its own, so a value the
+    user set in the settings window is never overwritten. True if it imported.
+    """
+    if not force and _bambu_ready(load_config("bambu")):
+        return False
+    found = _bambu_widget_connection()
+    if not found:
+        return False
+    update_config("bambu", **found)
+    log("imported bambu-widget connection from", _bambu_widget_config_path())
+    return True
+
+
+def bambu_apply_report(data, raw):
+    """
+    Merge one MQTT payload into `data`. The printer sends partial updates, so
+    this merges rather than replaces. Returns True if the payload carried a
+    print report at all.
+    """
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return False
+    p = payload.get("print") if isinstance(payload, dict) else None
+    if not isinstance(p, dict):
+        return False
+    data.update(p)
+    return True
+
+
+def bambu_fmt_remaining(minutes):
+    try:
+        m = int(minutes)
+    except (TypeError, ValueError):
+        return "--"
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def bambu_summary(configured, data, connected, error):
+    """
+    What the pet draws, as a plain dict. Pure: no threads, no network, so the
+    self-check can drive it directly.
+    """
+    out = {
+        "configured": configured,
+        "connected": connected,
+        "error": "" if connected else error,
+        "has_data": bool(data),
+        "mood": "idle",
+        "label": "",
+        "percent": None,
+        "remaining_text": "--",
+        "name": "",
+        "layer": None,
+        "total_layers": None,
+        "nozzle": None,
+        "bed": None,
+    }
+    if not configured or not data:
+        return out
+    st = data.get("gcode_state", "IDLE")
+    out["label"], out["mood"] = BAMBU_STATES.get(st, (str(st).title(), "idle"))
+    try:
+        out["percent"] = max(0.0, min(100.0, float(data.get("mc_percent", 0))))
+    except (TypeError, ValueError):
+        out["percent"] = 0.0
+    out["remaining_text"] = bambu_fmt_remaining(data.get("mc_remaining_time"))
+    out["name"] = data.get("subtask_name") or data.get("gcode_file") or ""
+    out["layer"] = data.get("layer_num")
+    out["total_layers"] = data.get("total_layer_num")
+    for key, dst in (("nozzle_temper", "nozzle"), ("bed_temper", "bed")):
+        try:
+            out[dst] = round(float(data[key]))
+        except (KeyError, TypeError, ValueError):
+            pass
+    return out
+
+
+def start_bambu_mqtt(cfg, gen):
+    """
+    Open the printer's MQTT report stream on paho's own thread. Ported from
+    bambu-widget's start_mqtt(); the only change is that results land in
+    module state that the pet polls, instead of a tkinter loop reading them.
+    """
+    import paho.mqtt.client as mqtt
+
+    if cfg.get("mode") == "cloud":
+        host = cfg.get("host", BAMBU_CLOUD_HOST)
+        username, password = f"u_{cfg['uid']}", cfg["token"]
+        hint = "ההתחברות נכשלה. ייתכן שה-Token פג: עדכנו אותו בהגדרות החיה."
+    else:
+        host = cfg["ip"]
+        username, password = "bblp", cfg["code"]
+        hint = "המדפסת דחתה את החיבור. בדקו את קוד הגישה ושמצב LAN Only דלוק."
+    serial = cfg["serial"]
+
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    except AttributeError:  # paho-mqtt 1.x
+        client = mqtt.Client()
+
+    client.username_pw_set(username, password)
+    client.tls_set(cert_reqs=ssl.CERT_NONE)  # the printer's certificate is self-signed
+    client.tls_insecure_set(True)
+
+    report = f"device/{serial}/report"
+    request = f"device/{serial}/request"
+
+    def on_connect(c, userdata, flags, rc, *args):
+        failed = rc.is_failure if hasattr(rc, "is_failure") else rc != 0
+        with _bambu_lock:
+            if gen != _bambu_gen:
+                return  # an older client, already replaced
+            _bambu_status["connected"] = not failed
+            _bambu_status["error"] = hint if failed else ""
+        if not failed:
+            c.subscribe(report)
+            # Ask for the full state once; after that the printer pushes only changes.
+            c.publish(request, json.dumps({"pushing": {"sequence_id": "1", "command": "pushall"}}))
+
+    def on_disconnect(c, userdata, *args):
+        with _bambu_lock:
+            if gen == _bambu_gen:
+                _bambu_status["connected"] = False
+
+    def on_message(c, userdata, msg):
+        with _bambu_lock:
+            if gen == _bambu_gen:
+                bambu_apply_report(_bambu_data, msg.payload)
+
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+    client.on_message = on_message
+    client.reconnect_delay_set(min_delay=1, max_delay=15)
+    client.connect_async(host, BAMBU_MQTT_PORT, keepalive=30)
+    client.loop_start()
+    return client
+
+
+def _stop_bambu_client(client):
+    try:
+        client.loop_stop()
+        client.disconnect()
+    except Exception as exc:
+        log("stopping bambu client failed:", exc)
+
+
+def _ensure_bambu_client(cfg):
+    """
+    Keep one MQTT client running for the connection in `cfg`. Called on every
+    poll: when the settings change, the old client is dropped and a new one
+    starts on the next tick, without restarting the pet.
+    """
+    global _bambu_key, _bambu_client, _bambu_gen
+    key = tuple(cfg.get(k) for k in BAMBU_CONN_KEYS)
+    with _bambu_lock:
+        if key == _bambu_key:
+            return
+        _bambu_gen += 1
+        gen = _bambu_gen
+        old, _bambu_client = _bambu_client, None
+        _bambu_key = key
+        _bambu_data.clear()
+        _bambu_status.update(connected=False, error="")
+    if old is not None:
+        _stop_bambu_client(old)
+    if not _bambu_ready(cfg):
+        return  # settings were cleared: nothing to connect to
+    try:
+        client = start_bambu_mqtt(cfg, gen)
+    except ImportError:
+        with _bambu_lock:
+            if gen == _bambu_gen:
+                _bambu_status["error"] = "חסרה הספרייה paho-mqtt. הריצו: pip install paho-mqtt"
+        return
+    except Exception as exc:
+        log("start_bambu_mqtt failed:", exc)
+        with _bambu_lock:
+            if gen == _bambu_gen:
+                _bambu_status["error"] = "לא ניתן היה להתחיל את החיבור"
+        return
+    with _bambu_lock:
+        current = gen == _bambu_gen
+        if current:
+            _bambu_client = client
+    if not current:
+        _stop_bambu_client(client)
+
+
+def read_bambu_status():
+    """Polled from the pet (Api.get_bambu_status). Imports bambu-widget's settings if this pet has none."""
+    import_bambu_widget_config()
+    cfg = load_config("bambu")
+    configured = _bambu_ready(cfg)
+    _ensure_bambu_client(cfg)
+    with _bambu_lock:
+        data = dict(_bambu_data)
+        connected = _bambu_status["connected"]
+        error = _bambu_status["error"]
+    return bambu_summary(configured, data, connected, error)
+
+
+def bambu_cloud_login():
+    """Console only (`python pet_app.py bambu-login`). Ported from bambu-widget's cloud_login()."""
+    import getpass
+    import urllib.request
+
+    def call(path, body=None, token=None):
+        headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(
+            BAMBU_API + path,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers=headers,
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read())
+
+    email = input("Bambu account email: ").strip()
+    password = getpass.getpass("Password: ")
+    res = call("/v1/user-service/user/login", {"account": email, "password": password})
+    token = res.get("accessToken")
+    if not token:
+        print("A verification code was sent to your email.")
+        code = input("Code: ").strip()
+        res = call("/v1/user-service/user/login", {"account": email, "code": code})
+        token = res.get("accessToken")
+    if not token:
+        raise SystemExit("Login failed. Check the email, password and code.")
+
+    uid = None
+    try:
+        uid = call("/v1/design-user-service/my/preference", token=token).get("uid")
+    except Exception as e:  # noqa
+        print("Could not fetch uid:", e)
+    if not uid:
+        uid = input("Could not detect your UID. Enter it manually: ").strip()
+
+    serial = ""
+    try:
+        devs = call("/v1/iot-service/api/user/bind", token=token).get("devices", [])
+    except Exception as e:  # noqa
+        print("Could not list printers:", e)
+        devs = []
+    if len(devs) == 1:
+        serial = devs[0].get("dev_id", "")
+        print(f"Printer: {devs[0].get('name')} ({serial})")
+    elif len(devs) > 1:
+        for i, d in enumerate(devs, 1):
+            print(f"  {i}) {d.get('name')}  {d.get('dev_id')}")
+        n = int(input("Which printer? ").strip() or "1")
+        serial = devs[n - 1].get("dev_id", "")
+    if not serial:
+        serial = input("Printer serial number: ").strip()
+
+    update_config("bambu", mode="cloud", uid=str(uid), token=token, serial=serial, host=BAMBU_CLOUD_HOST)
+    print("Saved. Restart the Bambu pet to connect.")
+
+
+def bambu_local_setup():
+    """Console only (`python pet_app.py bambu-local`): LAN Only Mode + Developer Mode on the printer."""
+    import getpass
+
+    ip = input("Printer IP: ").strip()
+    serial = input("Serial number: ").strip()
+    code = getpass.getpass("Access code: ").strip()
+    update_config("bambu", mode="local", ip=ip, serial=serial, code=code)
+    print("Saved. Restart the Bambu pet to connect.")
+
+
 _health_lock = threading.Lock()
 _health_cache = {
     "cpu_pct": None, "ram_pct": None, "battery_pct": None, "on_battery": None,
@@ -1688,6 +2042,11 @@ def get_pet_config(pet):
     return out
 
 
+def _settings_height(pet):
+    """Window height for a pet's settings window: each pet shows a different number of rows."""
+    return {"claude": 590, "system": 490, "bambu": 740}.get(pet, 410)
+
+
 class Api:
     def __init__(self, screen_h, open_target, pet):
         # NOTE: must stay underscore-prefixed. pywebview introspects every
@@ -1769,6 +2128,13 @@ class Api:
             return None
         return read_system_health()
 
+    def get_bambu_status(self):
+        """Polled from JS to draw the print progress. None for every other
+        pet, same gating as get_media()."""
+        if self._pet != "bambu" or self._hidden():
+            return None
+        return read_bambu_status()
+
     def run_boost(self):
         """Boost button: download + launch 100RAMoptimal in QuickClean mode.
         Fire-and-forget on its own thread - the download and the UAC prompt
@@ -1792,7 +2158,7 @@ class Api:
                 # refresh); both are hidden for every other pet, so their
                 # window stays short. +70 across the board for the new
                 # show/hide row, which is never hidden.
-                height=590 if self._pet == "claude" else (490 if self._pet == "system" else 410),
+                height=_settings_height(self._pet),
                 on_top=True,
                 resizable=False,
                 js_api=sapi,
@@ -2057,6 +2423,47 @@ class SettingsApi:
         except Exception as exc:
             log("set_hidden failed:", exc)
 
+    def get_bambu_connection(self):
+        """
+        Bambu pet only: the saved printer connection, to fill the form in
+        settings.html, plus the live status line under it.
+        """
+        if self._pet != "bambu":
+            return None
+        cfg = load_config("bambu")
+        status = read_bambu_status()
+        return {
+            "mode": cfg.get("mode") if cfg.get("mode") in ("cloud", "local") else "cloud",
+            "uid": cfg.get("uid", ""),
+            "token": cfg.get("token", ""),
+            "serial": cfg.get("serial", ""),
+            "ip": cfg.get("ip", ""),
+            "code": cfg.get("code", ""),
+            "configured": status["configured"],
+            "connected": status["connected"],
+            "error": status["error"],
+            "widget_available": _bambu_widget_connection() is not None,
+        }
+
+    def set_bambu_connection(self, mode, uid, token, serial, ip, code):
+        """
+        Bambu pet only: save the connection from the settings form. Every field
+        is kept, so switching between cloud and LAN does not lose the other one.
+        The pet reconnects on its next poll (see _ensure_bambu_client).
+        """
+        if self._pet != "bambu" or mode not in ("cloud", "local"):
+            return None
+        fields = {"mode": mode, "uid": uid, "token": token, "serial": serial, "ip": ip, "code": code}
+        update_config("bambu", **{k: str(v or "").strip() for k, v in fields.items()})
+        return self.get_bambu_connection()
+
+    def import_bambu_widget(self):
+        """Bambu pet only: the import button. Replaces the form's values with bambu-widget's."""
+        if self._pet != "bambu":
+            return None
+        import_bambu_widget_config(force=True)
+        return self.get_bambu_connection()
+
     def close_settings(self):
         try:
             if self._window:
@@ -2070,6 +2477,7 @@ class SettingsApi:
         "claude": "קלוד", "vlc": "VLC", "vscode": "VS Code",
         "curseforge": "CurseForge", "chrome": "כרום", "spotify": "ספוטיפיי",
         "discord": "דיסקורד", "system": "מערכת",
+        "bambu": "Bambu",
     }
 
     def list_pets(self):
@@ -2126,7 +2534,7 @@ class SettingsApi:
                 # doesn't leave the window too short (clipped rows) or too
                 # tall (dead space).
                 if self._window:
-                    height = 590 if pet_key == "claude" else (490 if pet_key == "system" else 410)
+                    height = _settings_height(pet_key)
                     try:
                         self._window.resize(320, height)
                     except Exception:
@@ -2138,10 +2546,15 @@ class SettingsApi:
 
 
 def main():
+    arg = sys.argv[1].lower() if len(sys.argv) > 1 else None
+    # Console-only Bambu setup (see the Bambu section); these never open a window.
+    if arg == "bambu-login":
+        return bambu_cloud_login()
+    if arg == "bambu-local":
+        return bambu_local_setup()
     make_dpi_aware()
     # `pet_app.py` (no args) shows every pet side by side.
     # `pet_app.py claude` / `pet_app.py vlc` shows just one.
-    arg = sys.argv[1].lower() if len(sys.argv) > 1 else None
     pets = [arg] if arg in PETS else list(PETS)
 
     screen_w, screen_h = get_screen_size()
@@ -2153,12 +2566,13 @@ def main():
         html_path = os.path.join(APP_DIR, PETS[pet])
         open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge,
                        "chrome": launch_chrome, "spotify": launch_spotify, "discord": launch_discord,
+                       "bambu": launch_bambu_studio,
                        # No app fronts the system-health pet - a click opens Task Manager,
                        # the closest thing to "the app this pet is about".
                        "system": lambda: os.startfile("taskmgr")}.get(pet, launch_claude_desktop)
         window_title = {"vlc": "VLC Pet", "vscode": "VS Code Pet", "curseforge": "CurseForge Pet",
                         "chrome": "Chrome Pet", "spotify": "Spotify Pet", "discord": "Discord Pet",
-                        "system": "System Pet"}.get(pet, "Desktop Pet")
+                        "system": "System Pet", "bambu": "Bambu Pet"}.get(pet, "Desktop Pet")
 
         # Reopen where the user last left it; fall back to the side-by-side layout.
         default_x = start_x + i * (WIN_W + gap)
