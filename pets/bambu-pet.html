@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="he">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Bambu Pet</title>
@@ -170,7 +170,7 @@
 <body data-mood="idle">
 <div class="stage" id="stage">
   <div id="status" dir="auto">
-    <div id="statusMain">מתחבר…</div>
+    <div id="statusMain">Connecting…</div>
     <div id="statusSub"></div>
   </div>
   <div id="petWrap">
@@ -332,8 +332,8 @@
     if (!s || !s.configured) {
       document.body.dataset.mood = 'idle';
       setLed('#8d909b');
-      statusMain.textContent = 'לא הוגדר';
-      statusSub.textContent = 'לחיצת אמצע על החיה: הגדרות';
+      statusMain.textContent = 'Not configured';
+      statusSub.textContent = 'Middle-click the printer for settings';
       moveHead(0);
       return;
     }
@@ -341,17 +341,25 @@
 
     if (!s.has_data) {
       document.body.dataset.mood = 'idle';
-      statusMain.textContent = s.connected ? 'ממתין למדפסת…' : (s.error ? 'אין חיבור' : 'מתחבר…');
-      statusSub.textContent = s.error || '';
+      statusMain.textContent = s.connected ? 'Waiting for printer…' : (s.error ? 'Connection failed' : 'Connecting…');
+      statusSub.textContent = s.error ? 'Check the printer connection in settings' : '';
       moveHead(0);
       return;
     }
 
     document.body.dataset.mood = s.mood;
     const pct = Math.round(s.percent || 0);
-    statusMain.textContent = `${s.label} · ${pct}%`;
+    const labels = {
+      'מדפיס': 'Printing',
+      'מתכונן': 'Preparing',
+      'מושהה': 'Paused',
+      'הסתיים': 'Finished',
+      'נכשל': 'Failed',
+      'פנוי': 'Idle',
+    };
+    statusMain.textContent = `${labels[s.label] || s.label} · ${pct}%`;
     if (s.mood === 'run' || s.mood === 'pause') {
-      statusSub.textContent = `נשארו ${s.remaining_text}`;
+      statusSub.textContent = `ETA ${s.remaining_text}`;
     } else {
       statusSub.textContent = s.name || '';
     }

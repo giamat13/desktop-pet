@@ -13,6 +13,7 @@ import time
 import ctypes
 import subprocess
 import threading
+import tempfile
 import webview
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -70,6 +71,7 @@ ACTIVITY_KEEP_SECS = 6 * 60 * 60
 # "enter" their settings) instead of only the pet that opened it - see
 # SettingsApi.list_pets/set_hidden_for/switch_pet below.
 _pet_windows = {}
+_config_lock = threading.RLock()
 
 
 def log(*args):
@@ -95,20 +97,34 @@ def log(*args):
 
 def _load_all_config():
     """Raw file contents: {pet_key: {taskbar_margin, size, position}, ...}."""
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    with _config_lock:
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
 
 def _save_all_config(all_cfg):
-    try:
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(all_cfg, f)
-    except Exception as exc:
-        log("save_config failed:", exc)
+    with _config_lock:
+        temp_path = None
+        try:
+            config_dir = os.path.dirname(CONFIG_PATH) or "."
+            os.makedirs(config_dir, exist_ok=True)
+            fd, temp_path = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=config_dir)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(all_cfg, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, CONFIG_PATH)
+        except Exception as exc:
+            log("save_config failed:", exc)
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError as cleanup_exc:
+                    log("save_config temp cleanup failed:", cleanup_exc)
 
 
 def load_config(pet):
@@ -118,9 +134,10 @@ def load_config(pet):
 
 def update_config(pet, **changes):
     """Merge changes into one pet's config section without touching others."""
-    all_cfg = _load_all_config()
-    all_cfg.setdefault(pet, {}).update(changes)
-    _save_all_config(all_cfg)
+    with _config_lock:
+        all_cfg = _load_all_config()
+        all_cfg.setdefault(pet, {}).update(changes)
+        _save_all_config(all_cfg)
 
 
 def get_margin(pet):
@@ -965,6 +982,30 @@ def apply_window_mode(window, desktop, pet):
     threading.Thread(target=_apply, daemon=True).start()
 
 
+def _pet_starts_hidden(pet, cfg):
+    return bool(cfg.get("hidden", False)) or (
+        pet == "bambu" and cfg.get("bambu_visibility") in ("printing", "hidden")
+    )
+
+
+def _show_pet_window(window, pet):
+    window.show()
+    if getattr(window, "native", None) is not None:
+        cfg = load_config(pet)
+        apply_window_mode(window, cfg.get("position", "taskbar") == "desktop", pet)
+
+
+def _on_pet_window_loaded(window, pet):
+    cfg = load_config(pet)
+    if _pet_starts_hidden(pet, cfg):
+        if cfg.get("hidden", False):
+            window.hide()
+        return False
+    if sys.platform == "win32":
+        apply_window_mode(window, cfg.get("position", "taskbar") == "desktop", pet)
+    return True
+
+
 def read_usage():
     """
     Live (5h) and weekly (7d) Claude usage percentages, as last written by
@@ -1433,7 +1474,6 @@ BAMBU_STATES = {
     "FAILED": ("נכשל", "fail"),
     "IDLE": ("פנוי", "idle"),
 }
-
 _bambu_lock = threading.Lock()
 _bambu_data = {}  # the printer's "print" report, merged across partial updates
 _bambu_status = {"connected": False, "error": ""}
@@ -1546,7 +1586,7 @@ def bambu_summary(configured, data, connected, error):
     for key, dst in (("nozzle_temper", "nozzle"), ("bed_temper", "bed")):
         try:
             out[dst] = round(float(data[key]))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             pass
     return out
 
@@ -2039,6 +2079,8 @@ def get_pet_config(pet):
         out["cpu_cores"] = cores
         out["disk_c_total_gb"] = disk_c_gb
         out["disk_all_total_gb"] = disk_all_gb
+    elif pet == "bambu":
+        out["bambu_visibility"] = cfg.get("bambu_visibility", "always")
     return out
 
 
@@ -2060,6 +2102,7 @@ class Api:
         self._settings_window = None
         self.dragging = False
         self.screen_h = screen_h
+        self._bambu_auto_hidden = None
 
     # Both pets call their own "open" name; expose both, same action.
     def open_claude(self):
@@ -2133,7 +2176,21 @@ class Api:
         pet, same gating as get_media()."""
         if self._pet != "bambu" or self._hidden():
             return None
-        return read_bambu_status()
+        status = read_bambu_status()
+        cfg = load_config("bambu")
+        if cfg.get("bambu_visibility", "always") == "printing":
+            should_hide = status["mood"] not in ("run", "pause")
+            if should_hide != self._bambu_auto_hidden:
+                try:
+                    if self._window:
+                        if should_hide:
+                            self._window.hide()
+                        else:
+                            _show_pet_window(self._window, "bambu")
+                    self._bambu_auto_hidden = should_hide
+                except Exception as exc:
+                    log("Bambu print-only visibility failed:", exc)
+        return status
 
     def run_boost(self):
         """Boost button: download + launch 100RAMoptimal in QuickClean mode.
@@ -2202,8 +2259,9 @@ class Api:
             return
         try:
             screen_w, screen_h = get_screen_size()
-            target_y = screen_h - WIN_H - get_margin(self._pet)
-            x = min(max(0, self._window.x), max(0, screen_w - WIN_W))
+            win_w, win_h = WIN_W, WIN_H
+            target_y = screen_h - win_h - get_margin(self._pet)
+            x = min(max(0, self._window.x), max(0, screen_w - win_w))
             y = self._window.y
             self._window.move(int(x), int(y))
             while y < target_y - 1:
@@ -2233,7 +2291,8 @@ class SettingsApi:
         if not self._pet_window:
             return
         try:
-            y = self.screen_h - WIN_H - int(margin)
+            win_h = WIN_H
+            y = self.screen_h - win_h - int(margin)
             self._pet_window.move(int(self._pet_window.x), int(y))
         except Exception as exc:
             log("settings _move_pet failed:", exc)
@@ -2414,14 +2473,42 @@ class SettingsApi:
         """
         try:
             on = bool(on)
+            if self._pet == "bambu":
+                self.set_bambu_visibility("hidden" if on else "always")
+                return
             update_config(self._pet, hidden=on)
             if self._pet_window:
                 if on:
                     self._pet_window.hide()
                 else:
-                    self._pet_window.show()
+                    _show_pet_window(self._pet_window, self._pet)
         except Exception as exc:
             log("set_hidden failed:", exc)
+
+    def set_bambu_visibility(self, mode):
+        """Choose whether Bambu is always shown, shown for active jobs, or hidden."""
+        if self._pet != "bambu" or mode not in ("always", "printing", "hidden"):
+            return None
+        try:
+            update_config("bambu", bambu_visibility=mode, hidden=(mode == "hidden"))
+            window = self._pet_window or _pet_windows.get("bambu")
+            if window:
+                if mode == "always":
+                    _show_pet_window(window, "bambu")
+                elif mode == "hidden":
+                    window.hide()
+                else:
+                    with _bambu_lock:
+                        state = _bambu_data.get("gcode_state", "IDLE")
+                    mood = BAMBU_STATES.get(state, ("", "idle"))[1]
+                    if mood not in ("run", "pause"):
+                        window.hide()
+                    else:
+                        _show_pet_window(window, "bambu")
+            return mode
+        except Exception as exc:
+            log("set_bambu_visibility failed:", exc)
+            return None
 
     def get_bambu_connection(self):
         """
@@ -2508,10 +2595,16 @@ class SettingsApi:
             if pet_key not in PETS:
                 return None
             on = bool(on)
-            update_config(pet_key, hidden=on)
+            changes = {"hidden": on}
+            if pet_key == "bambu" and not on:
+                changes["bambu_visibility"] = "always"
+            update_config(pet_key, **changes)
             window = _pet_windows.get(pet_key)
             if window:
-                window.hide() if on else window.show()
+                if on:
+                    window.hide()
+                else:
+                    _show_pet_window(window, pet_key)
             return on
         except Exception as exc:
             log("set_hidden_for failed:", exc)
@@ -2559,9 +2652,11 @@ def main():
 
     screen_w, screen_h = get_screen_size()
     gap = 20
-    start_x = screen_w - len(pets) * (WIN_W + gap) - 60
+    widths = [WIN_W for _ in pets]
+    start_x = screen_w - sum(widths) - max(0, len(pets) - 1) * gap - 60
 
     for i, pet in enumerate(pets):
+        win_w, win_h = WIN_W, WIN_H
         cfg = load_config(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
         open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge,
@@ -2575,8 +2670,8 @@ def main():
                         "system": "System Pet", "bambu": "Bambu Pet"}.get(pet, "Desktop Pet")
 
         # Reopen where the user last left it; fall back to the side-by-side layout.
-        default_x = start_x + i * (WIN_W + gap)
-        resting_y = screen_h - WIN_H - get_margin(pet)
+        default_x = start_x + sum(widths[:i]) + i * gap
+        resting_y = screen_h - win_h - get_margin(pet)
         win_x = cfg.get("x", default_x)
         desktop = cfg.get("position", "taskbar") == "desktop"
         # Taskbar pets always rest on the taskbar; only desktop pets keep a free y.
@@ -2587,8 +2682,8 @@ def main():
         window = webview.create_window(
             title=window_title,
             url=html_path,
-            width=WIN_W,
-            height=WIN_H,
+            width=win_w,
+            height=win_h,
             x=int(win_x),
             y=int(win_y),
             frameless=True,
@@ -2599,7 +2694,7 @@ def main():
             js_api=api,
             # Reopen hidden if the user hid this pet last session - see
             # SettingsApi.set_hidden() and get_pet_config()'s "hidden" key.
-            hidden=cfg.get("hidden", False),
+            hidden=_pet_starts_hidden(pet, cfg),
         )
         api._window = window
         _pet_windows[pet] = window
@@ -2607,9 +2702,7 @@ def main():
         hide_from_taskbar(window)
 
         def _on_loaded(window=window, pet=pet):
-            if sys.platform == "win32":
-                desktop = load_config(pet).get("position", "taskbar") == "desktop"
-                apply_window_mode(window, desktop, pet)
+            _on_pet_window_loaded(window, pet)
 
         window.events.loaded += _on_loaded
 

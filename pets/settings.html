@@ -190,28 +190,28 @@
        the pet. The form is filled from get_bambu_connection(); the status line
        keeps refreshing while this window is open. -->
   <div class="row" id="bambuRow" hidden>
-    <span class="label">חיבור למדפסת</span>
+    <span class="label">Printer connection</span>
     <div class="modes" id="bambuModes">
-      <button data-bambu-mode="cloud">ענן (חשבון Bambu)</button>
-      <button data-bambu-mode="local">LAN (ברשת המקומית)</button>
+      <button data-bambu-mode="cloud">Cloud (Bambu account)</button>
+      <button data-bambu-mode="local">LAN (local network)</button>
     </div>
-    <label class="field"><span>מספר סידורי של המדפסת (Serial)</span>
+    <label class="field"><span>Printer serial number</span>
       <input id="bambuSerial" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
     <div id="bambuCloudFields" class="fields">
-      <label class="field"><span>UID של המשתמש</span>
+      <label class="field"><span>Account UID</span>
         <input id="bambuUid" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
       <label class="field"><span>Token</span>
         <input id="bambuToken" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
     </div>
     <div id="bambuLocalFields" class="fields">
-      <label class="field"><span>כתובת IP של המדפסת</span>
+      <label class="field"><span>Printer IP address</span>
         <input id="bambuIp" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
-      <label class="field"><span>קוד גישה (מסך המדפסת)</span>
+      <label class="field"><span>Access code (printer screen)</span>
         <input id="bambuCode" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
     </div>
     <div class="bambu-actions">
-      <button class="bambu-btn secondary" id="bambuImport">ייבוא מ-bambu-widget</button>
-      <button class="bambu-btn" id="bambuSave">שמירה וחיבור מחדש</button>
+      <button class="bambu-btn secondary" id="bambuImport">Import from bambu-widget</button>
+      <button class="bambu-btn" id="bambuSave">Save & reconnect</button>
     </div>
     <span class="value" id="bambuImportHint"></span>
     <span id="bambuStatus"></span>
@@ -225,10 +225,13 @@
   <div class="row">
     <span class="label">הצגת החיה</span>
     <div class="modes" id="hiddenModes">
-      <button data-hidden="0">מוצגת</button>
-      <button data-hidden="1">מוסתרת</button>
+      <button data-hidden="0" id="normalPetShown">מוצגת</button>
+      <button data-hidden="1" id="normalPetHidden">מוסתרת</button>
+      <button data-hidden="0" id="bambuAlwaysShown" hidden>Always shown</button>
+      <button data-hidden="1" id="bambuHidden" hidden>Hidden</button>
+      <button data-hidden="printing" id="bambuPrintOnly" hidden>Only while printing</button>
     </div>
-    <span class="value">חיה מוסתרת ממשיכה לרוץ ברקע, רק לא נראית. כדי להחזיר אותה - פתחו את ההגדרות שוב לפני שסוגרים את החלון הזה.</span>
+    <span class="value" id="hiddenHint">חיה מוסתרת ממשיכה לרוץ ברקע, רק לא נראית. כדי להחזיר אותה - פתחו את ההגדרות שוב לפני שסוגרים את החלון הזה.</span>
   </div>
 
   <div class="row">
@@ -283,6 +286,12 @@
   const diskArrowsRow     = document.getElementById('diskArrowsRow');
   const diskArrowsButtons = [...document.querySelectorAll('#diskArrowsModes button')];
   const hiddenButtons     = [...document.querySelectorAll('#hiddenModes button')];
+  const bambuPrintOnly    = document.getElementById('bambuPrintOnly');
+  const bambuAlwaysShown  = document.getElementById('bambuAlwaysShown');
+  const bambuHidden       = document.getElementById('bambuHidden');
+  const normalPetShown    = document.getElementById('normalPetShown');
+  const normalPetHidden   = document.getElementById('normalPetHidden');
+  const hiddenHint        = document.getElementById('hiddenHint');
   const saveBtn        = document.getElementById('save');
   const otherPetsList  = document.getElementById('otherPetsList');
   const bambuRow          = document.getElementById('bambuRow');
@@ -439,9 +448,17 @@
   }
   hiddenButtons.forEach(b => b.addEventListener('click', () => {
     setHiddenState(b.dataset.hidden);
-    if (api() && api().set_hidden) api().set_hidden(b.dataset.hidden === '1');
+    if (!api()) return;
+    if (b.dataset.hidden === 'printing') {
+      if (api().set_bambu_visibility) api().set_bambu_visibility('printing');
+    } else if (cfgPet === 'bambu') {
+      if (api().set_bambu_visibility) api().set_bambu_visibility(b.dataset.hidden === '1' ? 'hidden' : 'always');
+    } else if (api().set_hidden) {
+      api().set_hidden(b.dataset.hidden === '1');
+    }
   }));
 
+  let cfgPet = '';
   function api() {
     return (window.pywebview && window.pywebview.api) || null;
   }
@@ -507,13 +524,15 @@
 
   function renderBambuStatus(s) {
     if (!s.configured) {
-      bambuStatus.textContent = 'לא מחובר: עדיין אין הגדרות. מלאו את הפרטים ושמרו, או ייבאו מ-bambu-widget.';
+      bambuStatus.textContent = 'Not connected. Enter your printer details or import them from bambu-widget.';
     } else if (s.connected) {
-      bambuStatus.textContent = 'מחובר למדפסת.';
+      bambuStatus.textContent = 'Connected to printer.';
     } else if (s.error) {
-      bambuStatus.textContent = s.error;
+      bambuStatus.textContent = s.mode === 'cloud'
+        ? 'Connection failed. The cloud token may have expired; update it and reconnect.'
+        : 'Connection failed. Check the access code and make sure LAN Only is enabled.';
     } else {
-      bambuStatus.textContent = 'מתחבר…';
+      bambuStatus.textContent = 'Connecting…';
     }
   }
 
@@ -525,7 +544,7 @@
     bambuIp.value = s.ip || '';
     bambuCode.value = s.code || '';
     bambuImportBtn.disabled = !s.widget_available;
-    bambuImportHint.textContent = s.widget_available ? '' : 'לא נמצאו הגדרות של bambu-widget במחשב הזה.';
+    bambuImportHint.textContent = s.widget_available ? '' : 'No bambu-widget settings found on this computer.';
     renderBambuStatus(s);
   }
 
@@ -544,7 +563,7 @@
 
   bambuSaveBtn.addEventListener('click', () => {
     if (!api() || !api().set_bambu_connection) return;
-    bambuStatus.textContent = 'שומר…';
+    bambuStatus.textContent = 'Saving…';
     api().set_bambu_connection(bambuMode, bambuUid.value, bambuToken.value,
                                bambuSerial.value, bambuIp.value, bambuCode.value)
          .then((s) => { if (s) fillBambuForm(s); });
@@ -598,8 +617,17 @@
     diskArrowsRow.hidden = cfg.pet !== 'system';
     setDiskArrowsShown(cfg.show_disk_arrows === false ? '0' : '1');
     bambuRow.hidden = cfg.pet !== 'bambu';
+    bambuPrintOnly.hidden = cfg.pet !== 'bambu';
+    bambuAlwaysShown.hidden = cfg.pet !== 'bambu';
+    bambuHidden.hidden = cfg.pet !== 'bambu';
+    normalPetShown.hidden = cfg.pet === 'bambu';
+    normalPetHidden.hidden = cfg.pet === 'bambu';
+    hiddenHint.textContent = cfg.pet === 'bambu'
+      ? 'Choose whether the printer is always visible, hidden, or visible only during an active print.'
+      : 'חיה מוסתרת ממשיכה לרוץ ברקע. אפשר להחזיר אותה דרך ההגדרות של חיה אחרת.';
+    cfgPet = cfg.pet || '';
     if (!bambuRow.hidden) loadBambu();
-    setHiddenState(cfg.hidden ? '1' : '0');
+    setHiddenState(cfg.hidden ? '1' : (cfg.pet === 'bambu' && cfg.bambu_visibility === 'printing' ? 'printing' : '0'));
   }
 
   // pywebview injects the api asynchronously; wait for it, then load config.

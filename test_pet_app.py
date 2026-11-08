@@ -686,6 +686,13 @@ def _test_bambu_status():
     assert s["mood"] == "run" and s["label"] == "מדפיס", s
     assert s["percent"] == 67.0 and s["remaining_text"] == "1h 12m", s
 
+    s = pet_app.bambu_summary(True, {
+        "gcode_state": "RUNNING", "mc_percent": 1.25, "layer_num": 1,
+        "total_layer_num": 100, "nozzle_temper": 215, "bed_temper": 60,
+    }, True, "")
+    assert s["percent"] == 1.25 and s["layer"] == 1 and s["total_layers"] == 100, s
+    assert (s["nozzle"], s["bed"]) == (215, 60), s
+
     s = pet_app.bambu_summary(True, {"gcode_state": "FAILED", "mc_percent": 150}, True, "")
     assert s["mood"] == "fail" and s["percent"] == 100.0, "progress must clamp to 100"
 
@@ -705,6 +712,154 @@ def _test_bambu_status():
         "get_bambu_status() must stay gated to the bambu pet"
 
     print("OK: bambu status self-check passed")
+
+
+def _test_config_atomic_persistence():
+    """Interrupted settings writes must not erase hidden-pet choices on install."""
+    tmp = tempfile.mkdtemp(prefix="desktop_pet_config_selfcheck_")
+    old_config_path = pet_app.CONFIG_PATH
+    pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+    real_dump = pet_app.json.dump
+    try:
+        pet_app.update_config("bambu", hidden=True, bambu_visibility="printing")
+        pet_app.update_config("system", hidden=True)
+        saved = pet_app._load_all_config()
+        assert saved["bambu"]["hidden"] is True
+        assert saved["bambu"]["bambu_visibility"] == "printing"
+        assert saved["system"]["hidden"] is True
+
+        def fail_dump(*_args, **_kwargs):
+            raise OSError("simulated interrupted config write")
+
+        pet_app.json.dump = fail_dump
+        pet_app._save_all_config({"claude": {"hidden": False}})
+        assert pet_app._load_all_config() == saved, \
+            "a failed replacement must leave the last complete config untouched"
+        assert not [name for name in os.listdir(tmp) if name.endswith(".tmp")], \
+            "failed temporary writes must be cleaned up"
+    finally:
+        pet_app.json.dump = real_dump
+        pet_app.CONFIG_PATH = old_config_path
+
+    print("OK: atomic config persistence self-check passed")
+
+
+def _test_bambu_settings():
+    """Bambu visibility preferences save and update the window."""
+    tmp = tempfile.mkdtemp(prefix="desktop_pet_bambu_settings_")
+    old_config_path = pet_app.CONFIG_PATH
+    old_data = dict(pet_app._bambu_data)
+
+    class FakeWindow:
+        def __init__(self):
+            self.actions = []
+
+        def hide(self):
+            self.actions.append("hide")
+
+        def show(self):
+            self.actions.append("show")
+
+    pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+    pet_app._bambu_data.clear()
+    window = FakeWindow()
+    api = pet_app.SettingsApi(window, 1080, "bambu")
+    try:
+        assert api.set_bambu_visibility("printing") == "printing"
+        cfg = pet_app.get_pet_config("bambu")
+        assert cfg["hidden"] is False and cfg["bambu_visibility"] == "printing", cfg
+        assert window.actions[-1] == "hide", window.actions
+
+        with pet_app._bambu_lock:
+            pet_app._bambu_data["gcode_state"] = "RUNNING"
+        assert api.set_bambu_visibility("printing") == "printing"
+        assert window.actions[-1] == "show", window.actions
+
+        assert api.set_bambu_visibility("hidden") == "hidden"
+        assert pet_app.get_pet_config("bambu")["hidden"] is True
+        assert window.actions[-1] == "hide", window.actions
+        assert api.set_bambu_visibility("always") == "always"
+        assert pet_app.get_pet_config("bambu")["hidden"] is False
+        assert window.actions[-1] == "show", window.actions
+    finally:
+        pet_app._bambu_data.clear()
+        pet_app._bambu_data.update(old_data)
+        pet_app.CONFIG_PATH = old_config_path
+
+    print("OK: Bambu settings self-check passed")
+
+
+def _test_bambu_print_only_visibility():
+    """The pet window follows active/finished print state without losing its config."""
+    tmp = tempfile.mkdtemp(prefix="desktop_pet_bambu_visibility_")
+    old_config_path = pet_app.CONFIG_PATH
+    real_read_status = pet_app.read_bambu_status
+
+    class FakeWindow:
+        def __init__(self):
+            self.actions = []
+
+        def hide(self):
+            self.actions.append("hide")
+
+        def show(self):
+            self.actions.append("show")
+
+    pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+    pet_app.update_config("bambu", hidden=False, bambu_visibility="printing")
+    window = FakeWindow()
+    api = pet_app.Api(1080, lambda: None, "bambu")
+    api._window = window
+    states = [
+        {"mood": "run", "configured": True},
+        {"mood": "idle", "configured": True},
+    ]
+    pet_app.read_bambu_status = lambda: states.pop(0)
+    try:
+        assert api.get_bambu_status()["mood"] == "run"
+        assert window.actions == ["show"], window.actions
+        assert api.get_bambu_status()["mood"] == "idle"
+        assert window.actions == ["show", "hide"], window.actions
+        assert pet_app.get_pet_config("bambu")["hidden"] is False
+    finally:
+        pet_app.read_bambu_status = real_read_status
+        pet_app.CONFIG_PATH = old_config_path
+
+    print("OK: Bambu print-only visibility self-check passed")
+
+
+def _test_hidden_pet_startup():
+    """Startup must not reinitialize visibility for pets configured as hidden."""
+    tmp = tempfile.mkdtemp(prefix="desktop_pet_hidden_startup_")
+    old_config_path = pet_app.CONFIG_PATH
+    real_apply_window_mode = pet_app.apply_window_mode
+    calls = []
+
+    class FakeWindow:
+        def __init__(self):
+            self.actions = []
+
+        def hide(self):
+            self.actions.append("hide")
+
+    pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+    try:
+        pet_app.update_config("system", hidden=True, position="desktop")
+        pet_app.update_config("bambu", hidden=False, bambu_visibility="printing")
+        pet_app.update_config("claude", hidden=False, position="desktop")
+        pet_app.apply_window_mode = lambda window, desktop, pet: calls.append((pet, desktop))
+
+        hidden_window = FakeWindow()
+        assert not pet_app._on_pet_window_loaded(hidden_window, "system")
+        assert hidden_window.actions == ["hide"]
+        assert pet_app._pet_starts_hidden("bambu", pet_app.load_config("bambu"))
+        assert pet_app._on_pet_window_loaded(FakeWindow(), "claude")
+        assert calls == ([("claude", True)] if sys.platform == "win32" else [])
+    finally:
+        pet_app.apply_window_mode = real_apply_window_mode
+        pet_app.CONFIG_PATH = old_config_path
+
+    print("OK: hidden pet startup self-check passed")
 
 
 def _test_bambu_import_and_reconnect():
@@ -825,6 +980,10 @@ def main():
     _test_read_discord_voice_state()
     _test_sample_health_once()
     _test_bambu_status()
+    _test_config_atomic_persistence()
+    _test_bambu_settings()
+    _test_bambu_print_only_visibility()
+    _test_hidden_pet_startup()
     _test_bambu_import_and_reconnect()
     _test_desktop_is_showing_no_hang()
 
