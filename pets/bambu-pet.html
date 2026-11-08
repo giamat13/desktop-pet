@@ -220,6 +220,25 @@
   #bambuPetSvg[data-mood="pause"] .eye-pause,
   #bambuPetSvg[data-mood="fail"] .eye-fail,
   #bambuPetSvg[data-mood="idle"] .eye-idle { display: inline; }
+  #mouth path, #mouth ellipse {
+    display: none;
+    fill: none;
+    stroke: #70efb6;
+    stroke-width: 2.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  #bambuPetSvg[data-expression="happy"] #mouthSmile,
+  #bambuPetSvg[data-expression="excited"] #mouthGrin,
+  #bambuPetSvg[data-expression="focused"] #mouthO,
+  #bambuPetSvg[data-expression="worried"] #mouthWorried,
+  #bambuPetSvg[data-expression="sad"] #mouthSad,
+  #bambuPetSvg[data-expression="flat"] #mouthFlat,
+  #bambuPetSvg[data-expression="neutral"] #mouthNeutral { display: inline; }
+  #bambuPetSvg[data-expression="worried"] #mouth path,
+  #bambuPetSvg[data-expression="sad"] #mouth path { stroke: #ff8b96; }
+  #bambuPetSvg[data-expression="flat"] #mouth path,
+  #bambuPetSvg[data-expression="neutral"] #mouth path { stroke: #9ba3b4; }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
     95%           { transform: scaleY(0.05); }
@@ -350,6 +369,15 @@
               <path d="M170 138 L190 138"/>
             </g>
           </g>
+          <g id="mouth" aria-hidden="true">
+            <path id="mouthSmile" d="M141 177 Q150 184 159 177"/>
+            <path id="mouthGrin" d="M140 177 Q150 185 160 177"/>
+            <ellipse id="mouthO" cx="150" cy="179.5" rx="3" ry="3.5"/>
+            <path id="mouthWorried" d="M141 181 Q150 174 159 181"/>
+            <path id="mouthSad" d="M141 182 Q150 174 159 182"/>
+            <path id="mouthFlat" d="M142 179 H158"/>
+            <path id="mouthNeutral" d="M143 179 Q150 181 157 179"/>
+          </g>
 
           <text id="screenPercent" x="150" y="169">--%</text>
         </g>
@@ -455,6 +483,25 @@
     statusBadge.dataset.mood = mood;
     svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
     statusText.textContent = label;
+    let expression = 'neutral';
+    if (!s || !s.configured || !s.connected || !s.has_data) {
+      expression = 'worried';
+    } else if (mood === 'fail' || mood === 'offline') {
+      expression = 'sad';
+    } else if (mood === 'done') {
+      expression = 'excited';
+    } else if (mood === 'pause') {
+      expression = 'flat';
+    } else if (s.warming) {
+      expression = 'focused';
+    } else if (mood === 'run' && Number.isFinite(percent) && percent <= 5) {
+      expression = 'worried';
+    } else if (mood === 'run' && percent >= 95) {
+      expression = 'excited';
+    } else if (mood === 'run') {
+      expression = 'happy';
+    }
+    svg.dataset.expression = expression;
 
     const elapsed = s && s.elapsed_minutes != null ? Number(s.elapsed_minutes) : NaN;
     const remaining = s && s.remaining_minutes != null ? Number(s.remaining_minutes) : NaN;
