@@ -567,8 +567,6 @@
       expression = 'flat';
     } else if (s.warming) {
       expression = 'focused';
-    } else if (mood === 'run' && Number.isFinite(percent) && percent <= 5) {
-      expression = 'worried';
     } else if (mood === 'run' && percent >= 90) {
       expression = 'near-finish';
     } else if (mood === 'run') {
