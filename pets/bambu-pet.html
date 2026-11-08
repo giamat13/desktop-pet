@@ -261,7 +261,10 @@
   #printer-root.progress-hop {
     animation: progressHop 480ms cubic-bezier(.2,.8,.25,1);
   }
-  #shadow.progress-hop {
+  #printer-root.layer-hop {
+    animation: layerHop 620ms cubic-bezier(.2,.8,.25,1);
+  }
+  #shadow.progress-hop, #shadow.layer-hop {
     animation: progressShadow 480ms ease-out;
   }
   @keyframes stateReaction {
@@ -280,6 +283,12 @@
     0%, 100% { transform: translateY(0) scale(1, 1); }
     35% { transform: translateY(-7px) scale(0.98, 1.03); }
     68% { transform: translateY(0) scale(1.03, 0.97); }
+  }
+  @keyframes layerHop {
+    0%, 100% { transform: translateY(0) scale(1, 1); }
+    28% { transform: translateY(-17px) scale(0.96, 1.08); }
+    57% { transform: translateY(0) scale(1.08, 0.9); }
+    78% { transform: translateY(-5px) scale(0.99, 1.02); }
   }
   @keyframes progressShadow {
     0%, 100% { transform: scaleX(1); opacity: 0.32; }
@@ -631,15 +640,18 @@
       && previousLayer !== null && Math.round(layer) > previousLayer;
     if (crossedMilestone || changedLayer) {
       printerRoot.classList.remove('progress-hop');
+      printerRoot.classList.remove('layer-hop');
       shadow.classList.remove('progress-hop');
+      shadow.classList.remove('layer-hop');
       void printerRoot.getBoundingClientRect();
-      printerRoot.classList.add('progress-hop');
-      shadow.classList.add('progress-hop');
+      const hopClass = changedLayer ? 'layer-hop' : 'progress-hop';
+      printerRoot.classList.add(hopClass);
+      shadow.classList.add(hopClass);
       clearTimeout(progressHopTimer);
       progressHopTimer = setTimeout(() => {
-        printerRoot.classList.remove('progress-hop');
-        shadow.classList.remove('progress-hop');
-      }, 500);
+        printerRoot.classList.remove('progress-hop', 'layer-hop');
+        shadow.classList.remove('progress-hop', 'layer-hop');
+      }, changedLayer ? 650 : 500);
     }
     if (crossedMilestone) {
       svg.classList.remove('milestone-blink');
