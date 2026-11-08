@@ -239,6 +239,20 @@
   #bambuPetSvg[data-expression="sad"] #mouth path { stroke: #ff8b96; }
   #bambuPetSvg[data-expression="flat"] #mouth path,
   #bambuPetSvg[data-expression="neutral"] #mouth path { stroke: #9ba3b4; }
+  #face, #mouth {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  #bambuPetSvg.state-change #face,
+  #bambuPetSvg.state-change #mouth {
+    animation: stateReaction 620ms cubic-bezier(.2,.8,.25,1);
+  }
+  @keyframes stateReaction {
+    0% { transform: translateY(0) scale(1); }
+    38% { transform: translateY(-3px) scale(1.16); }
+    72% { transform: translateY(1px) scale(0.96); }
+    100% { transform: translateY(0) scale(1); }
+  }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
     95%           { transform: scaleY(0.05); }
@@ -439,6 +453,8 @@
   const layerBadge = document.getElementById('layerBadge');
   const layerCount = document.getElementById('layerCount');
   const layerFill = document.getElementById('layerFill');
+  let previousStateKey = null;
+  let stateReactionTimer = null;
 
   function applyPetScale(pct) {
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
@@ -502,6 +518,20 @@
       expression = 'happy';
     }
     svg.dataset.expression = expression;
+    const stateKey = [
+      mood,
+      s && s.connected ? 'connected' : 'disconnected',
+      s && s.has_data ? 'data' : 'no-data',
+      s && s.warming ? 'warming' : 'ready'
+    ].join(':');
+    if (previousStateKey !== null && stateKey !== previousStateKey) {
+      svg.classList.remove('state-change');
+      void svg.getBoundingClientRect();
+      svg.classList.add('state-change');
+      clearTimeout(stateReactionTimer);
+      stateReactionTimer = setTimeout(() => svg.classList.remove('state-change'), 700);
+    }
+    previousStateKey = stateKey;
 
     const elapsed = s && s.elapsed_minutes != null ? Number(s.elapsed_minutes) : NaN;
     const remaining = s && s.remaining_minutes != null ? Number(s.remaining_minutes) : NaN;
