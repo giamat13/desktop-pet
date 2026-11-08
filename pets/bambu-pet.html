@@ -31,58 +31,14 @@
   }
 
   svg#bambuPetSvg {
-    width: 140px;
-    height: auto;
+    width: 300px;
+    height: 260px;
     overflow: visible;
     cursor: pointer;
   }
 
   /* Soft drop shadow so the printer reads against any wallpaper. */
   #printer-hit { filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.35)); }
-
-  /* ================= status pill (top of the window, above the printer) ================= */
-  #status {
-    position: absolute;
-    top: 4px;
-    left: 50%;
-    transform: translateX(-50%);
-    box-sizing: border-box;
-    min-width: 150px;
-    max-width: 300px;
-    padding: 4px 14px 5px;
-    border-radius: 14px;
-    background: linear-gradient(180deg, rgba(40, 43, 53, 0.95), rgba(18, 19, 24, 0.95));
-    border: 1px solid #343846;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-    text-align: center;
-    font-family: "Segoe UI", system-ui, sans-serif;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    pointer-events: none;
-    transition: border-color 0.3s;
-  }
-  #statusMain {
-    font-size: 11px;
-    font-weight: 700;
-    color: #f4f5f7;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  #statusSub {
-    font-size: 10px;
-    color: #9aa0ae;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  body[data-mood="run"]   #status { border-color: rgba(61, 220, 151, 0.55); }
-  body[data-mood="pause"] #status { border-color: rgba(255, 159, 67, 0.55); }
-  body[data-mood="done"]  #status { border-color: rgba(74, 168, 255, 0.55); }
-  body[data-mood="fail"]  #status { border-color: rgba(255, 92, 108, 0.6); }
-  body[data-mood="run"]   #statusMain { color: #3ddc97; }
-  body[data-mood="pause"] #statusMain { color: #ff9f43; }
-  body[data-mood="done"]  #statusMain { color: #4aa8ff; }
-  body[data-mood="fail"]  #statusMain { color: #ff5c6c; }
 
   /* ================= shadow + idle motion ================= */
   #shadow {
@@ -120,61 +76,162 @@
     100% { transform: translateY(0)     scale(1, 1)      rotate(0deg); }
   }
 
-  /* ================= the nozzle head moves along the rail with the progress ================= */
-  #head {
-    transition: transform 1.2s linear;
-  }
-  #glow { opacity: 0; }
-  body[data-mood="run"] #glow { opacity: 1; animation: glow 1s ease-in-out infinite; }
-  @keyframes glow {
-    0%, 100% { opacity: 0.45; }
-    50%      { opacity: 1; }
+  #screenPercent {
+    font: 700 18px "Segoe UI", system-ui, sans-serif;
+    text-anchor: middle;
+    fill: #70efb6;
   }
 
-  /* ================= LED: a halo behind the light ================= */
-  #led, #ledHalo { transition: fill 0.3s; }
-
-  /* ================= progress plate ================= */
-  #plateFill {
-    fill: #5b6070;
-    transition: width 1.2s linear, fill 0.3s;
+  .timeBadge { display: none; }
+  .timeBadge.visible { display: inline; }
+  .timeBadge rect {
+    fill: #171b24;
+    stroke-width: 1.5;
   }
-  body[data-mood="run"]   #plateFill { fill: #3ddc97; }
-  body[data-mood="pause"] #plateFill { fill: #ff9f43; }
-  body[data-mood="done"]  #plateFill { fill: #4aa8ff; }
-  body[data-mood="fail"]  #plateFill { fill: #ff5c6c; }
+  .timeBadge text {
+    text-anchor: middle;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  .timeBadge .timeLabel {
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+  }
+  .timeBadge .timeValue {
+    font-size: 10px;
+    font-weight: 700;
+  }
+  #elapsedBadge rect { stroke: #8dd5ff; }
+  #elapsedBadge text { fill: #8dd5ff; }
+  #remainingBadge rect { stroke: #7ff0bb; }
+  #remainingBadge text { fill: #7ff0bb; }
 
-  /* ================= face: one of four expressions, chosen by mood ================= */
-  .eye-happy, .eye-x, .eye-sleep { display: none; }
+  .temperatureBadge { display: none; }
+  .temperatureBadge.visible { display: inline; }
+  .temperatureBadge rect {
+    fill: #171b24;
+    stroke-width: 1.5;
+  }
+  .temperatureBadge text {
+    text-anchor: middle;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  .temperatureBadge .temperatureLabel {
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+  }
+  .temperatureBadge .temperatureValue {
+    font-size: 9px;
+    font-weight: 700;
+  }
+  .temperatureBadge .temperatureTrack {
+    fill: #0c1017;
+    stroke: #46505e;
+    stroke-width: 0.7;
+  }
+  .temperatureBadge .temperatureFill {
+    rx: 2;
+  }
+  #nozzleBadge .temperatureFrame { stroke: #ffc45c; }
+  #nozzleBadge text { fill: #ffc45c; }
+  #nozzleBadge .temperatureFill { fill: #ffc45c; }
+  #bedBadge .temperatureFrame { stroke: #8dd5ff; }
+  #bedBadge text { fill: #8dd5ff; }
+  #bedBadge .temperatureFill { fill: #8dd5ff; }
+
+  #firstLayerIndicator, #layerBadge { display: none; }
+  #firstLayerIndicator.visible, #layerBadge.visible { display: inline; }
+  #wifiIndicator { display: none; }
+  #wifiIndicator.visible { display: inline; }
+  #wifiIndicator .wifiBack {
+    fill: #171b24;
+    stroke: #505a6b;
+    stroke-width: 1;
+  }
+  #wifiIndicator .wifiArc {
+    fill: none;
+    stroke: #414958;
+    stroke-linecap: round;
+    stroke-width: 2.5;
+  }
+  #wifiIndicator .wifiDot { fill: #414958; }
+  #wifiIndicator[data-level="1"] .wifiInner { stroke: #ff8b76; }
+  #wifiIndicator[data-level="1"] .wifiDot { fill: #ff8b76; }
+  #wifiIndicator[data-level="2"] .wifiMiddle,
+  #wifiIndicator[data-level="2"] .wifiInner { stroke: #ffd27a; }
+  #wifiIndicator[data-level="2"] .wifiDot { fill: #ffd27a; }
+  #wifiIndicator[data-level="3"] .wifiArc { stroke: #70efb6; }
+  #wifiIndicator[data-level="3"] .wifiDot { fill: #70efb6; }
+  #layerBadge text {
+    fill: #ffc45c;
+    font: 700 11px "Segoe UI", system-ui, sans-serif;
+    text-anchor: middle;
+  }
+
+  #statusBadge {
+    pointer-events: none;
+  }
+  #statusBadge rect {
+    fill: #242934;
+    stroke: #9ba3b4;
+  }
+  #statusBadge text {
+    fill: #d3dae7;
+    font: 700 8.5px "Segoe UI", system-ui, sans-serif;
+  }
+  #statusBadge circle {
+    fill: #9ba3b4;
+    animation: statusBlink 1.25s ease-in-out infinite;
+  }
+  #statusBadge[data-mood="run"] rect { fill: #124a39; stroke: #7ff0bb; }
+  #statusBadge[data-mood="run"] text, #statusBadge[data-mood="run"] circle { fill: #7ff0bb; }
+  #statusBadge[data-mood="pause"] rect { fill: #5d3e12; stroke: #ffd27a; }
+  #statusBadge[data-mood="pause"] text, #statusBadge[data-mood="pause"] circle { fill: #ffd27a; }
+  #statusBadge[data-mood="done"] rect { fill: #18415b; stroke: #8dd5ff; }
+  #statusBadge[data-mood="done"] text, #statusBadge[data-mood="done"] circle { fill: #8dd5ff; }
+  #statusBadge[data-mood="fail"], #statusBadge[data-mood="offline"] {
+    color: #ff8b96;
+  }
+  #statusBadge[data-mood="fail"] rect, #statusBadge[data-mood="offline"] rect {
+    fill: #64222b;
+    stroke: #ff8b96;
+  }
+  #statusBadge[data-mood="fail"] text, #statusBadge[data-mood="fail"] circle,
+  #statusBadge[data-mood="offline"] text, #statusBadge[data-mood="offline"] circle {
+    fill: #ff8b96;
+  }
+  @keyframes statusBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+  }
+
+  /* ================= printer face ================= */
   .eye-open {
-    transform-origin: 150px 154px;
+    transform-origin: 150px 137px;
     animation: blink 4.2s ease-in-out infinite;
   }
-  #pupilL, #pupilR { transition: transform 0.4s ease; }
+  .eye-happy, .eye-pause, .eye-fail, .eye-idle { display: none; }
+  #bambuPetSvg[data-mood="done"] .eye-open,
+  #bambuPetSvg[data-mood="pause"] .eye-open,
+  #bambuPetSvg[data-mood="fail"] .eye-open,
+  #bambuPetSvg[data-mood="idle"] .eye-open { display: none; }
+  #bambuPetSvg[data-mood="done"] .eye-happy,
+  #bambuPetSvg[data-mood="pause"] .eye-pause,
+  #bambuPetSvg[data-mood="fail"] .eye-fail,
+  #bambuPetSvg[data-mood="idle"] .eye-idle { display: inline; }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
     95%           { transform: scaleY(0.05); }
     97%           { transform: scaleY(1); }
   }
 
-  body[data-mood="done"] .eye-open   { display: none; }
-  body[data-mood="done"] .eye-happy  { display: inline; }
-  body[data-mood="fail"] .eye-open   { display: none; }
-  body[data-mood="fail"] .eye-x      { display: inline; }
-  body[data-mood="idle"] .eye-open,
-  body[data-mood="pause"] .eye-open  { display: none; }
-  body[data-mood="idle"] .eye-sleep,
-  body[data-mood="pause"] .eye-sleep { display: inline; }
 </style>
 </head>
-<body data-mood="idle">
+<body>
 <div class="stage" id="stage">
-  <div id="status" dir="auto">
-    <div id="statusMain">Connecting…</div>
-    <div id="statusSub"></div>
-  </div>
   <div id="petWrap">
-    <svg id="bambuPetSvg" viewBox="0 0 300 400" xmlns="http://www.w3.org/2000/svg">
+    <svg id="bambuPetSvg" viewBox="0 0 300 260" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"   stop-color="#4a4f62"/>
@@ -201,10 +258,6 @@
           <stop offset="0%"   stop-color="#ffffff"/>
           <stop offset="100%" stop-color="#c9cfdd"/>
         </radialGradient>
-        <radialGradient id="glowGrad" cx="50%" cy="50%" r="50%">
-          <stop offset="0%"   stop-color="#ffd27a" stop-opacity="1"/>
-          <stop offset="100%" stop-color="#ff9f43" stop-opacity="0"/>
-        </radialGradient>
         <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
           <stop offset="0%"   stop-color="#000000" stop-opacity="0.55"/>
           <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
@@ -220,15 +273,20 @@
       <g id="printer-root">
         <g id="printer-hit">
           <!-- feet -->
-          <rect x="110" y="192" width="24" height="44" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
-          <rect x="166" y="192" width="24" height="44" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
+          <rect x="110" y="210" width="24" height="39" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
+          <rect x="166" y="210" width="24" height="39" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
 
           <!-- enclosure -->
-          <rect x="56" y="70" width="188" height="130" rx="18" fill="url(#bodyGrad)" stroke="#5b6070" stroke-width="2"/>
+          <rect x="56" y="70" width="188" height="152" rx="18" fill="url(#bodyGrad)" stroke="#5b6070" stroke-width="2"/>
           <!-- top lid: a lighter band, so the printer reads as a box with a top -->
           <rect x="58" y="72" width="184" height="22" rx="14" fill="url(#lidGrad)" opacity="0.9"/>
+          <g id="statusBadge" data-mood="idle" role="status" aria-live="polite">
+            <rect x="146" y="73" width="80" height="14" rx="7"/>
+            <circle cx="154" cy="80" r="2.7"/>
+            <text id="statusText" x="163" y="83">Connecting</text>
+          </g>
           <!-- inner bevel -->
-          <rect x="60" y="74" width="180" height="122" rx="15" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
+          <rect x="60" y="74" width="180" height="144" rx="15" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
           <!-- side vents -->
           <g fill="#0b0d12" opacity="0.7">
             <rect x="63" y="128" width="6" height="4" rx="2"/>
@@ -238,53 +296,92 @@
             <rect x="231" y="136" width="6" height="4" rx="2"/>
             <rect x="231" y="144" width="6" height="4" rx="2"/>
           </g>
-
+          <g id="firstLayerIndicator" aria-label="First layer in progress">
+            <rect x="70" y="157" width="9" height="29" rx="4.5" fill="#171b24" stroke="#8a6030" stroke-width="1"/>
+            <path d="M72.5 163 H76.5" stroke="#ffc45c" stroke-width="2" stroke-linecap="round"/>
+            <path d="M72.5 170 H76.5" stroke="#9b7138" stroke-width="1.7" stroke-linecap="round"/>
+            <path d="M72.5 177 H76.5" stroke="#705632" stroke-width="1.5" stroke-linecap="round"/>
+          </g>
           <!-- gantry: two end posts and the rail the nozzle travels along -->
           <rect x="60" y="82" width="10" height="18" rx="3" fill="#23262f"/>
           <rect x="230" y="82" width="10" height="18" rx="3" fill="#23262f"/>
           <rect x="66" y="88" width="168" height="6" rx="3" fill="url(#railGrad)"/>
+          <g id="wifiIndicator" aria-label="Wi-Fi signal strength">
+            <rect class="wifiBack" x="61" y="72" width="34" height="23" rx="7"/>
+            <path class="wifiArc wifiOuter" d="M66 81 Q78 69 90 81"/>
+            <path class="wifiArc wifiMiddle" d="M70 84 Q78 76 86 84"/>
+            <path class="wifiArc wifiInner" d="M74 87 Q78 83 82 87"/>
+            <circle class="wifiDot" cx="78" cy="90" r="2"/>
+          </g>
 
-          <!-- nozzle head: the carriage, its position comes from the progress -->
+          <!-- nozzle head -->
           <g id="head">
             <rect x="138" y="90" width="24" height="18" rx="4" fill="#9aa0ae"/>
             <rect x="140" y="91" width="20" height="3" rx="1.5" fill="#dfe3ec" opacity="0.7"/>
             <rect x="146" y="108" width="8" height="9" rx="2" fill="#c9ccd6"/>
             <path d="M146.5 117 L153.5 117 L150 123 Z" fill="#f5c542"/>
-            <circle id="glow" cx="150" cy="123" r="8" fill="url(#glowGrad)"/>
           </g>
-
-          <!-- status LED with a soft halo: green when connected, red when not -->
-          <circle id="ledHalo" cx="230" cy="80" r="8" fill="#8d909b" opacity="0.25"/>
-          <circle id="led" cx="230" cy="80" r="3.8" fill="#8d909b"/>
 
           <!-- the face is the printer's display -->
-          <rect x="84" y="126" width="132" height="56" rx="14" fill="#15171e" stroke="#3a3e4b" stroke-width="1.5"/>
-          <rect x="86" y="128" width="128" height="52" rx="12" fill="url(#screenGrad)"/>
-          <rect x="86" y="128" width="128" height="52" rx="12" fill="url(#scanlines)"/>
+          <rect x="82" y="119" width="136" height="78" rx="14" fill="#15171e" stroke="#3a3e4b" stroke-width="1.5"/>
+          <rect x="84" y="121" width="132" height="74" rx="12" fill="url(#screenGrad)"/>
+          <rect x="84" y="121" width="132" height="74" rx="12" fill="url(#scanlines)"/>
           <g id="face">
             <g class="eye-open">
-              <ellipse cx="120" cy="154" rx="12" ry="14" fill="url(#eyeGrad)"/>
-              <ellipse cx="180" cy="154" rx="12" ry="14" fill="url(#eyeGrad)"/>
-              <circle id="pupilL" cx="122" cy="158" r="5.5" fill="#16171b"/>
-              <circle id="pupilR" cx="182" cy="158" r="5.5" fill="#16171b"/>
+              <ellipse cx="120" cy="137" rx="9" ry="10" fill="url(#eyeGrad)"/>
+              <ellipse cx="180" cy="137" rx="9" ry="10" fill="url(#eyeGrad)"/>
+              <circle id="pupilL" cx="121" cy="140" r="4" fill="#16171b"/>
+              <circle id="pupilR" cx="181" cy="140" r="4" fill="#16171b"/>
             </g>
-            <g class="eye-happy" fill="none" stroke="#3ddc97" stroke-width="5" stroke-linecap="round">
-              <path d="M108 160 Q120 146 132 160"/>
-              <path d="M168 160 Q180 146 192 160"/>
+            <g class="eye-happy" fill="none" stroke="#70efb6" stroke-width="4" stroke-linecap="round">
+              <path d="M110 139 Q120 128 130 139"/>
+              <path d="M170 139 Q180 128 190 139"/>
             </g>
-            <g class="eye-x" stroke="#ff5c6c" stroke-width="5" stroke-linecap="round">
-              <path d="M112 146 L128 162 M128 146 L112 162"/>
-              <path d="M172 146 L188 162 M188 146 L172 162"/>
+            <g class="eye-pause" fill="none" stroke="#ffd27a" stroke-width="4" stroke-linecap="round">
+              <path d="M111 138 Q120 146 129 138"/>
+              <path d="M171 138 Q180 146 189 138"/>
             </g>
-            <g class="eye-sleep" stroke="#8d909b" stroke-width="4" stroke-linecap="round">
-              <path d="M110 156 L130 156"/>
-              <path d="M170 156 L190 156"/>
+            <g class="eye-fail" fill="none" stroke="#ff6b78" stroke-width="4" stroke-linecap="round">
+              <path d="M114 132 L126 144 M126 132 L114 144"/>
+              <path d="M174 132 L186 144 M186 132 L174 144"/>
+            </g>
+            <g class="eye-idle" fill="none" stroke="#9ba3b4" stroke-width="4" stroke-linecap="round">
+              <path d="M110 138 L130 138"/>
+              <path d="M170 138 L190 138"/>
             </g>
           </g>
 
-          <!-- progress plate along the bottom of the enclosure -->
-          <rect x="80" y="186" width="140" height="8" rx="4" fill="#15171e"/>
-          <rect id="plateFill" x="80" y="186" width="0" height="8" rx="4"/>
+          <text id="screenPercent" x="150" y="169">--%</text>
+        </g>
+        <g id="layerBadge" aria-label="Layer progress">
+          <rect x="68" y="111" width="12" height="94" rx="6" fill="#11151d" stroke="#705632" stroke-width="1"/>
+          <rect id="layerFill" x="71" y="203" width="6" height="2" rx="3" fill="#ffc45c"/>
+          <rect x="53" y="206" width="42" height="14" rx="4" fill="#171b24" stroke="#705632" stroke-width="0.8"/>
+          <text id="layerCount" x="74" y="217">18/240</text>
+        </g>
+        <g id="elapsedBadge" class="timeBadge" aria-label="Estimated elapsed print time">
+          <rect x="-26" y="145" width="82" height="42" rx="9"/>
+          <text class="timeLabel" x="15" y="160">ELAPSED</text>
+          <text id="elapsedText" class="timeValue" x="15" y="178">--</text>
+        </g>
+        <g id="remainingBadge" class="timeBadge" aria-label="Estimated time remaining">
+          <rect x="244" y="145" width="82" height="42" rx="9"/>
+          <text class="timeLabel" x="285" y="160">REMAINING</text>
+          <text id="remainingText" class="timeValue" x="285" y="178">--</text>
+        </g>
+        <g id="nozzleBadge" class="temperatureBadge" aria-label="Nozzle temperature">
+          <rect class="temperatureFrame" x="-32" y="99" width="94" height="42" rx="9" fill="#171b24" stroke-width="1.5"/>
+          <text class="temperatureLabel" x="15" y="110">NOZZLE</text>
+          <rect class="temperatureTrack" x="-22" y="115" width="74" height="6" rx="3"/>
+          <rect id="nozzleFill" class="temperatureFill" x="-22" y="115" width="0" height="6"/>
+          <text id="nozzleText" class="temperatureValue" x="15" y="136">-- / --°</text>
+        </g>
+        <g id="bedBadge" class="temperatureBadge" aria-label="Bed temperature">
+          <rect class="temperatureFrame" x="238" y="99" width="94" height="42" rx="9" fill="#171b24" stroke-width="1.5"/>
+          <text class="temperatureLabel" x="285" y="110">BED</text>
+          <rect class="temperatureTrack" x="248" y="115" width="74" height="6" rx="3"/>
+          <rect id="bedFill" class="temperatureFill" x="248" y="115" width="0" height="6"/>
+          <text id="bedText" class="temperatureValue" x="285" y="136">-- / --°</text>
         </g>
       </g>
     </svg>
@@ -296,74 +393,111 @@
   const petWrap     = document.getElementById('petWrap');
   const printerRoot = document.getElementById('printer-root');
   const shadow      = document.getElementById('shadow');
-  const head        = document.getElementById('head');
-  const plateFill   = document.getElementById('plateFill');
-  const pupilL      = document.getElementById('pupilL');
-  const pupilR      = document.getElementById('pupilR');
-  const led         = document.getElementById('led');
-  const ledHalo     = document.getElementById('ledHalo');
-  const statusMain  = document.getElementById('statusMain');
-  const statusSub   = document.getElementById('statusSub');
-
-  const HEAD_RANGE = 66;   // the head travels this far either side of the centre
-  const PLATE_W    = 140;  // full width of the progress plate, in SVG units
+  const screenPercent = document.getElementById('screenPercent');
+  const statusBadge = document.getElementById('statusBadge');
+  const statusText  = document.getElementById('statusText');
+  const elapsedBadge = document.getElementById('elapsedBadge');
+  const elapsedText = document.getElementById('elapsedText');
+  const remainingBadge = document.getElementById('remainingBadge');
+  const remainingText = document.getElementById('remainingText');
+  const nozzleBadge = document.getElementById('nozzleBadge');
+  const nozzleText = document.getElementById('nozzleText');
+  const nozzleFill = document.getElementById('nozzleFill');
+  const bedBadge = document.getElementById('bedBadge');
+  const bedText = document.getElementById('bedText');
+  const bedFill = document.getElementById('bedFill');
+  const firstLayerIndicator = document.getElementById('firstLayerIndicator');
+  const wifiIndicator = document.getElementById('wifiIndicator');
+  const layerBadge = document.getElementById('layerBadge');
+  const layerCount = document.getElementById('layerCount');
+  const layerFill = document.getElementById('layerFill');
 
   function applyPetScale(pct) {
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
   }
 
-  function setLed(color) {
-    led.style.fill = color;
-    ledHalo.style.fill = color;
-  }
-
-  // Head, plate and pupils all follow the same percentage, so they move together.
-  function moveHead(percent) {
-    const p = Math.max(0, Math.min(100, Number(percent) || 0));
-    const dx = -HEAD_RANGE + (2 * HEAD_RANGE) * p / 100;
-    head.style.transform = `translateX(${dx}px)`;
-    plateFill.style.width = `${PLATE_W * p / 100}px`;
-    const look = (dx / HEAD_RANGE) * 3;
-    pupilL.style.transform = `translate(${look}px, 3px)`;
-    pupilR.style.transform = `translate(${look}px, 3px)`;
+  function formatDuration(minutes) {
+    const total = Math.max(0, Math.round(Number(minutes)));
+    if (!Number.isFinite(total)) return '--';
+    const hours = Math.floor(total / 60);
+    const mins = total % 60;
+    return hours ? `${hours}h ${mins}m` : `${mins}m`;
   }
 
   function render(s) {
-    if (!s || !s.configured) {
-      document.body.dataset.mood = 'idle';
-      setLed('#8d909b');
-      statusMain.textContent = 'Not configured';
-      statusSub.textContent = 'Middle-click the printer for settings';
-      moveHead(0);
-      return;
-    }
-    setLed(s.connected ? '#3ddc97' : '#ff5c6c');
+    const percent = s && s.configured && s.has_data ? Number(s.percent) : NaN;
+    screenPercent.textContent = Number.isFinite(percent)
+      ? `${percent.toFixed(2)}%`
+      : '--%';
 
-    if (!s.has_data) {
-      document.body.dataset.mood = 'idle';
-      statusMain.textContent = s.connected ? 'Waiting for printer…' : (s.error ? 'Connection failed' : 'Connecting…');
-      statusSub.textContent = s.error ? 'Check the printer connection in settings' : '';
-      moveHead(0);
-      return;
+    let mood = 'idle';
+    let label = 'Not configured';
+    if (s && s.configured) {
+      if (!s.connected) {
+        mood = 'offline';
+        label = 'Offline';
+      } else if (!s.has_data) {
+        label = 'Connecting';
+      } else if (s.warming) {
+        mood = s.mood || 'run';
+        label = 'Warming up';
+      } else {
+        mood = s.mood || 'idle';
+        label = ({
+          run: 'Printing',
+          pause: 'Paused',
+          done: 'Finished',
+          fail: 'Error',
+          idle: 'Idle'
+        })[mood] || 'Idle';
+      }
     }
+    statusBadge.dataset.mood = mood;
+    svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
+    statusText.textContent = label;
 
-    document.body.dataset.mood = s.mood;
-    const pct = Math.round(s.percent || 0);
-    const labels = {
-      'מדפיס': 'Printing',
-      'מתכונן': 'Preparing',
-      'מושהה': 'Paused',
-      'הסתיים': 'Finished',
-      'נכשל': 'Failed',
-      'פנוי': 'Idle',
-    };
-    statusMain.textContent = `${labels[s.label] || s.label} · ${pct}%`;
-    if (s.mood === 'run' || s.mood === 'pause') {
-      statusSub.textContent = `ETA ${s.remaining_text}`;
-    } else {
-      statusSub.textContent = s.name || '';
+    const elapsed = s && s.elapsed_minutes != null ? Number(s.elapsed_minutes) : NaN;
+    const remaining = s && s.remaining_minutes != null ? Number(s.remaining_minutes) : NaN;
+    const showWarmup = s && s.connected && s.has_data && s.warming === true;
+    const nozzleReady = s && s.nozzle_temp != null && s.nozzle_target != null;
+    const bedReady = s && s.bed_temp != null && s.bed_target != null;
+    const showTimes = s && s.connected && s.has_data
+      && ['run', 'pause'].includes(mood)
+      && Number.isFinite(elapsed) && Number.isFinite(remaining);
+    elapsedBadge.classList.toggle('visible', showTimes);
+    remainingBadge.classList.toggle('visible', showTimes);
+    if (showTimes) {
+      elapsedText.textContent = `~${formatDuration(elapsed)}`;
+      remainingText.textContent = formatDuration(remaining);
     }
-    moveHead(s.percent);
+    nozzleBadge.classList.toggle('visible', showWarmup && nozzleReady);
+    bedBadge.classList.toggle('visible', showWarmup && bedReady);
+    if (showWarmup && nozzleReady) {
+      nozzleText.textContent = `${s.nozzle_temp}° / ${s.nozzle_target}°`;
+      nozzleFill.setAttribute('width', String(74 * Math.min(1, s.nozzle_temp / s.nozzle_target)));
+    }
+    if (showWarmup && bedReady) {
+      bedText.textContent = `${s.bed_temp}° / ${s.bed_target}°`;
+      bedFill.setAttribute('width', String(74 * Math.min(1, s.bed_temp / s.bed_target)));
+    }
+    const layer = s && s.layer_num != null ? Number(s.layer_num) : NaN;
+    const totalLayers = s && s.total_layers != null ? Number(s.total_layers) : NaN;
+    const hasLayerProgress = s && s.has_data && ['run', 'pause'].includes(mood)
+      && Number.isFinite(layer) && Number.isFinite(totalLayers) && totalLayers > 0;
+    const showFirstLayer = hasLayerProgress && Math.round(layer) === 1;
+    firstLayerIndicator.classList.toggle('visible', showFirstLayer);
+    layerBadge.classList.toggle('visible', hasLayerProgress && !showFirstLayer);
+    if (hasLayerProgress && !showFirstLayer) {
+      const progress = Math.max(0, Math.min(1, layer / totalLayers));
+      const fillHeight = Math.max(2, 90 * progress);
+      layerFill.setAttribute('y', String(204 - fillHeight));
+      layerFill.setAttribute('height', String(fillHeight));
+      layerCount.textContent = `${Math.round(layer)}/${Math.round(totalLayers)}`;
+    }
+    const wifiLevel = s && s.wifi_level != null ? Number(s.wifi_level) : NaN;
+    const hasWifiLevel = Number.isFinite(wifiLevel) && wifiLevel >= 1 && wifiLevel <= 3;
+    wifiIndicator.classList.toggle('visible', hasWifiLevel);
+    if (hasWifiLevel) wifiIndicator.dataset.level = String(Math.round(wifiLevel));
   }
 
   // Polled from Python's read_bambu_status() - see the Bambu section in pet_app.py.
@@ -381,8 +515,6 @@
     poll();
     setInterval(poll, 1500);
   });
-
-  moveHead(0);
 
   function triggerJump() {
     printerRoot.classList.remove('jump');

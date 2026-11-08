@@ -95,10 +95,14 @@ if (Test-Path $vlcrc) {
 #
 # To remove it:  Unregister-ScheduledTask -TaskName DesktopPetUsageRefresh -Confirm:$false
 $taskName = "DesktopPetUsageRefresh"
-# Re-running the installer must not flip a choice the user already made in the
-# settings window - only a first install (task absent) decides, and it says on.
-$existing = (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue).State
-$wasDisabled = $existing -eq "Disabled"
+# Capture the registered task's enabled setting before replacing it. State can
+# report "Running" for a task whose next runs have already been disabled, so
+# Settings.Enabled is the authoritative choice when a task already exists.
+$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+$wasEnabled = $true
+if ($null -ne $existingTask) {
+    $wasEnabled = $existingTask.State -ne "Disabled" -and [bool]$existingTask.Settings.Enabled
+}
 $action = New-ScheduledTaskAction -Execute $pythonwExe `
     -Argument "`"$installDir\refresh_usage.py`"" -WorkingDirectory $installDir
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
@@ -108,11 +112,12 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -MultipleInstances IgnoreNew -StartWhenAvailable
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Settings $settings -Description "Refreshes DesktopPet usage gauges" -Force | Out-Null
-if ($wasDisabled) {
+if ($wasEnabled) {
+    Enable-ScheduledTask -TaskName $taskName | Out-Null
+    Write-Host "Registered usage refresh task '$taskName' (every 10 min, ~0.4% of the weekly allowance)."
+} else {
     Disable-ScheduledTask -TaskName $taskName | Out-Null
     Write-Host "Usage refresh task '$taskName' left OFF (your setting kept)."
-} else {
-    Write-Host "Registered usage refresh task '$taskName' (every 10 min, ~0.4% of the weekly allowance)."
 }
 
 $startupFolder = [Environment]::GetFolderPath("Startup")

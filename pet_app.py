@@ -8,6 +8,7 @@ import os
 import sys
 import glob
 import json
+import math
 import ssl
 import time
 import ctypes
@@ -33,6 +34,7 @@ PETS = {
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
+BAMBU_WIN_W, BAMBU_WIN_H = 500, 260
 DEFAULT_TASKBAR_MARGIN = 46  # used only as an initial guess for calibration
 
 CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet")
@@ -1483,6 +1485,11 @@ _bambu_gen = 0        # bumped on every reconnect; callbacks from an older clien
 BAMBU_CONN_KEYS = ("mode", "uid", "token", "serial", "host", "ip", "code")
 
 
+def pet_window_size(pet):
+    """Bambu's live printer graphic uses a wider window; other pets are unchanged."""
+    return (BAMBU_WIN_W, BAMBU_WIN_H) if pet == "bambu" else (WIN_W, WIN_H)
+
+
 def _bambu_ready(cfg):
     if cfg.get("mode") == "cloud":
         return all(cfg.get(k) for k in ("uid", "token", "serial"))
@@ -1542,15 +1549,6 @@ def bambu_apply_report(data, raw):
     return True
 
 
-def bambu_fmt_remaining(minutes):
-    try:
-        m = int(minutes)
-    except (TypeError, ValueError):
-        return "--"
-    h, m = divmod(m, 60)
-    return f"{h}h {m:02d}m" if h else f"{m}m"
-
-
 def bambu_summary(configured, data, connected, error):
     """
     What the pet draws, as a plain dict. Pure: no threads, no network, so the
@@ -1562,32 +1560,83 @@ def bambu_summary(configured, data, connected, error):
         "error": "" if connected else error,
         "has_data": bool(data),
         "mood": "idle",
-        "label": "",
         "percent": None,
-        "remaining_text": "--",
-        "name": "",
-        "layer": None,
+        "elapsed_minutes": None,
+        "remaining_minutes": None,
+        "layer_num": None,
+        "nozzle_temp": None,
+        "nozzle_target": None,
+        "bed_temp": None,
+        "bed_target": None,
+        "warming": False,
         "total_layers": None,
-        "nozzle": None,
-        "bed": None,
+        "wifi_level": None,
     }
     if not configured or not data:
         return out
     st = data.get("gcode_state", "IDLE")
-    out["label"], out["mood"] = BAMBU_STATES.get(st, (str(st).title(), "idle"))
+    out["mood"] = BAMBU_STATES.get(st, ("", "idle"))[1]
     try:
         out["percent"] = max(0.0, min(100.0, float(data.get("mc_percent", 0))))
     except (TypeError, ValueError):
         out["percent"] = 0.0
-    out["remaining_text"] = bambu_fmt_remaining(data.get("mc_remaining_time"))
-    out["name"] = data.get("subtask_name") or data.get("gcode_file") or ""
-    out["layer"] = data.get("layer_num")
-    out["total_layers"] = data.get("total_layer_num")
-    for key, dst in (("nozzle_temper", "nozzle"), ("bed_temper", "bed")):
+    try:
+        layer = float(data.get("layer_num"))
+        if math.isfinite(layer) and layer >= 0:
+            out["layer_num"] = int(layer)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    try:
+        total_layers = float(data.get("total_layer_num"))
+        if math.isfinite(total_layers) and total_layers > 0:
+            out["total_layers"] = int(total_layers)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    for source, target in (
+        ("nozzle_temper", "nozzle_temp"),
+        ("nozzle_target_temper", "nozzle_target"),
+        ("bed_temper", "bed_temp"),
+        ("bed_target_temper", "bed_target"),
+    ):
         try:
-            out[dst] = round(float(data[key]))
-        except (KeyError, TypeError, ValueError, OverflowError):
+            value = float(data.get(source))
+            if math.isfinite(value) and value >= 0:
+                out[target] = int(round(value))
+        except (TypeError, ValueError, OverflowError):
             pass
+    if st in ("PREPARE", "INIT"):
+        out["warming"] = any(
+            out[current] is not None
+            and out[target] is not None
+            and out[target] > 0
+            and out[current] < out[target] - 1
+            for current, target in (
+                ("nozzle_temp", "nozzle_target"),
+                ("bed_temp", "bed_target"),
+            )
+        )
+    signal = data.get("wifi_signal")
+    if signal is not None:
+        try:
+            signal_dbm = float(str(signal).lower().replace("dbm", "").strip())
+            if math.isfinite(signal_dbm):
+                out["wifi_level"] = (
+                    3 if signal_dbm >= -60
+                    else 2 if signal_dbm >= -75
+                    else 1
+                )
+        except (TypeError, ValueError, OverflowError):
+            pass
+    try:
+        remaining = float(data.get("mc_remaining_time"))
+        if math.isfinite(remaining) and remaining >= 0:
+            out["remaining_minutes"] = int(round(remaining))
+            if out["percent"] < 100:
+                out["elapsed_minutes"] = int(round(
+                    remaining * out["percent"] / (100 - out["percent"])
+                ))
+    except (TypeError, ValueError, OverflowError):
+        pass
     return out
 
 
@@ -2086,7 +2135,7 @@ def get_pet_config(pet):
 
 def _settings_height(pet):
     """Window height for a pet's settings window: each pet shows a different number of rows."""
-    return {"claude": 590, "system": 490, "bambu": 740}.get(pet, 410)
+    return {"claude": 590, "system": 490, "bambu": 850}.get(pet, 410)
 
 
 class Api:
@@ -2259,7 +2308,7 @@ class Api:
             return
         try:
             screen_w, screen_h = get_screen_size()
-            win_w, win_h = WIN_W, WIN_H
+            win_w, win_h = pet_window_size(self._pet)
             target_y = screen_h - win_h - get_margin(self._pet)
             x = min(max(0, self._window.x), max(0, screen_w - win_w))
             y = self._window.y
@@ -2291,7 +2340,7 @@ class SettingsApi:
         if not self._pet_window:
             return
         try:
-            win_h = WIN_H
+            _, win_h = pet_window_size(self._pet)
             y = self.screen_h - win_h - int(margin)
             self._pet_window.move(int(self._pet_window.x), int(y))
         except Exception as exc:
@@ -2652,11 +2701,11 @@ def main():
 
     screen_w, screen_h = get_screen_size()
     gap = 20
-    widths = [WIN_W for _ in pets]
+    widths = [pet_window_size(pet)[0] for pet in pets]
     start_x = screen_w - sum(widths) - max(0, len(pets) - 1) * gap - 60
 
     for i, pet in enumerate(pets):
-        win_w, win_h = WIN_W, WIN_H
+        win_w, win_h = pet_window_size(pet)
         cfg = load_config(pet)
         html_path = os.path.join(APP_DIR, PETS[pet])
         open_target = {"vlc": launch_vlc, "vscode": launch_vscode, "curseforge": launch_curseforge,

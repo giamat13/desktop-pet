@@ -668,8 +668,8 @@ def _test_bambu_status():
     """
     The Bambu pet's pure parts: partial MQTT reports must merge into the last
     known state (not replace it), non-print payloads and garbage must be
-    ignored, gcode_state must map to the right label and mood, progress must be
-    clamped to 0-100, and remaining minutes must read as "1h 12m". Also the
+    ignored,     gcode_state must map to the right mood and progress must be clamped to
+    0-100. Only print progress is returned for display. Also the
     not-configured path and the gating to the bambu pet. No printer, no network.
     """
     data = {}
@@ -683,18 +683,49 @@ def _test_bambu_status():
     assert data["mc_percent"] == 67
 
     s = pet_app.bambu_summary(True, data, True, "")
-    assert s["mood"] == "run" and s["label"] == "מדפיס", s
-    assert s["percent"] == 67.0 and s["remaining_text"] == "1h 12m", s
+    assert s["mood"] == "run", s
+    assert s["percent"] == 67.0, s
+    assert s["remaining_minutes"] == 72 and s["elapsed_minutes"] == 146, s
+    assert s["layer_num"] is None, s
 
     s = pet_app.bambu_summary(True, {
         "gcode_state": "RUNNING", "mc_percent": 1.25, "layer_num": 1,
-        "total_layer_num": 100, "nozzle_temper": 215, "bed_temper": 60,
+        "total_layer_num": 100, "nozzle_temper": 215, "nozzle_target_temper": 220,
+        "bed_temper": 60, "bed_target_temper": 65, "wifi_signal": "-55dBm",
+        "mc_remaining_time": 72,
     }, True, "")
-    assert s["percent"] == 1.25 and s["layer"] == 1 and s["total_layers"] == 100, s
-    assert (s["nozzle"], s["bed"]) == (215, 60), s
+    assert s["percent"] == 1.25, s
+    assert s["elapsed_minutes"] == 1 and s["remaining_minutes"] == 72, s
+    assert s["layer_num"] == 1, s
+    assert (s["nozzle_temp"], s["nozzle_target"], s["bed_temp"], s["bed_target"]) == (215, 220, 60, 65), s
+    assert s["warming"] is False, "normal printing should not show warm-up temperatures"
+    assert s["layer_num"] == 1 and s["total_layers"] == 100, s
+    assert s["wifi_level"] == 3, s
+    assert set(s) == {
+        "configured", "connected", "error", "has_data", "mood", "percent",
+        "elapsed_minutes", "remaining_minutes", "layer_num",
+        "nozzle_temp", "nozzle_target", "bed_temp", "bed_target", "warming", "total_layers", "wifi_level",
+    }, s
+
+    for signal, expected in (("-55dBm", 3), ("-68dBm", 2), ("-82dBm", 1), ("unavailable", None)):
+        summary = pet_app.bambu_summary(True, {"wifi_signal": signal}, True, "")
+        assert summary["wifi_level"] == expected, (signal, summary)
+
+    s = pet_app.bambu_summary(True, {
+        "gcode_state": "PREPARE", "nozzle_temper": 45, "nozzle_target_temper": 220,
+        "bed_temper": 28, "bed_target_temper": 60,
+    }, True, "")
+    assert s["warming"] is True, "PREPARE with active heaters below target is warm-up"
+    assert (s["nozzle_temp"], s["bed_temp"]) == (45, 28), s
+    s = pet_app.bambu_summary(True, {
+        "gcode_state": "PREPARE", "nozzle_temper": 219.5, "nozzle_target_temper": 220,
+        "bed_temper": 60, "bed_target_temper": 60,
+    }, True, "")
+    assert s["warming"] is False, "temperatures at target should hide warm-up badges"
 
     s = pet_app.bambu_summary(True, {"gcode_state": "FAILED", "mc_percent": 150}, True, "")
     assert s["mood"] == "fail" and s["percent"] == 100.0, "progress must clamp to 100"
+    assert s["elapsed_minutes"] is None, "elapsed estimate must avoid division by zero at 100%"
 
     assert pet_app.bambu_summary(True, {"gcode_state": "FINISH", "mc_percent": 100}, True, "")["mood"] == "done"
     assert pet_app.bambu_summary(True, {"gcode_state": "PAUSE", "mc_percent": 57}, True, "")["mood"] == "pause"
@@ -703,10 +734,6 @@ def _test_bambu_status():
     s = pet_app.bambu_summary(True, {}, False, "Login failed")
     assert s["configured"] and not s["has_data"] and s["error"] == "Login failed", s
     assert pet_app.bambu_summary(False, {}, False, "")["configured"] is False
-
-    assert pet_app.bambu_fmt_remaining(45) == "45m"
-    assert pet_app.bambu_fmt_remaining(0) == "0m"
-    assert pet_app.bambu_fmt_remaining(None) == "--"
 
     assert pet_app.Api(1080, lambda: None, "claude").get_bambu_status() is None, \
         "get_bambu_status() must stay gated to the bambu pet"
@@ -745,7 +772,7 @@ def _test_config_atomic_persistence():
 
 
 def _test_bambu_settings():
-    """Bambu visibility preferences save and update the window."""
+    """Bambu visibility and display preferences save and update the window."""
     tmp = tempfile.mkdtemp(prefix="desktop_pet_bambu_settings_")
     old_config_path = pet_app.CONFIG_PATH
     old_data = dict(pet_app._bambu_data)
