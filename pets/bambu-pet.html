@@ -427,7 +427,7 @@
   function render(s) {
     const percent = s && s.configured && s.has_data ? Number(s.percent) : NaN;
     screenPercent.textContent = Number.isFinite(percent)
-      ? `${percent.toFixed(2)}%`
+      ? `${percent}%`
       : '--%';
 
     let mood = 'idle';
