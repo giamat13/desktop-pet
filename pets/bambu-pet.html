@@ -212,6 +212,7 @@
     animation: blink 4.2s ease-in-out infinite;
   }
   .eye-happy, .eye-pause, .eye-fail, .eye-idle { display: none; }
+  .eye-near-finish { display: none; }
   #bambuPetSvg[data-mood="done"] .eye-open,
   #bambuPetSvg[data-mood="pause"] .eye-open,
   #bambuPetSvg[data-mood="fail"] .eye-open,
@@ -220,6 +221,11 @@
   #bambuPetSvg[data-mood="pause"] .eye-pause,
   #bambuPetSvg[data-mood="fail"] .eye-fail,
   #bambuPetSvg[data-mood="idle"] .eye-idle { display: inline; }
+  #bambuPetSvg[data-expression="near-finish"] .eye-open { display: none; }
+  #bambuPetSvg[data-expression="near-finish"] .eye-near-finish { display: inline; }
+  #bambuPetSvg.milestone-blink .eye-open {
+    animation: milestoneBlink 380ms ease-in-out;
+  }
   #mouth path, #mouth ellipse {
     display: none;
     fill: none;
@@ -230,6 +236,7 @@
   }
   #bambuPetSvg[data-expression="happy"] #mouthSmile,
   #bambuPetSvg[data-expression="excited"] #mouthGrin,
+  #bambuPetSvg[data-expression="near-finish"] #mouthGrin,
   #bambuPetSvg[data-expression="focused"] #mouthO,
   #bambuPetSvg[data-expression="worried"] #mouthWorried,
   #bambuPetSvg[data-expression="sad"] #mouthSad,
@@ -278,6 +285,10 @@
     0%, 100% { transform: scaleX(1); opacity: 0.32; }
     35% { transform: scaleX(0.82); opacity: 0.2; }
     68% { transform: scaleX(1.06); opacity: 0.36; }
+  }
+  @keyframes milestoneBlink {
+    0%, 100% { transform: scaleY(1); }
+    35%, 65% { transform: scaleY(0.08); }
   }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
@@ -389,8 +400,16 @@
             <g class="eye-open">
               <ellipse cx="120" cy="137" rx="9" ry="10" fill="url(#eyeGrad)"/>
               <ellipse cx="180" cy="137" rx="9" ry="10" fill="url(#eyeGrad)"/>
-              <circle id="pupilL" cx="121" cy="140" r="4" fill="#16171b"/>
-              <circle id="pupilR" cx="181" cy="140" r="4" fill="#16171b"/>
+              <g id="pupils">
+                <circle id="pupilL" cx="121" cy="134" r="4" fill="#16171b"/>
+                <circle id="pupilR" cx="181" cy="134" r="4" fill="#16171b"/>
+              </g>
+            </g>
+            <g class="eye-near-finish">
+              <ellipse cx="120" cy="136" rx="10" ry="11" fill="url(#eyeGrad)"/>
+              <ellipse cx="180" cy="136" rx="10" ry="11" fill="url(#eyeGrad)"/>
+              <circle cx="121" cy="133" r="4" fill="#16171b"/>
+              <circle cx="181" cy="133" r="4" fill="#16171b"/>
             </g>
             <g class="eye-happy" fill="none" stroke="#70efb6" stroke-width="4" stroke-linecap="round">
               <path d="M110 139 Q120 128 130 139"/>
@@ -460,6 +479,7 @@
   const svg         = document.getElementById('bambuPetSvg');
   const petWrap     = document.getElementById('petWrap');
   const printerRoot = document.getElementById('printer-root');
+  const printHead   = document.getElementById('head');
   const shadow      = document.getElementById('shadow');
   const screenPercent = document.getElementById('screenPercent');
   const statusBadge = document.getElementById('statusBadge');
@@ -485,6 +505,7 @@
   let previousPercent = null;
   let previousLayer = null;
   let progressHopTimer = null;
+  let milestoneBlinkTimer = null;
 
   function applyPetScale(pct) {
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
@@ -498,11 +519,17 @@
     return hours ? `${hours}h ${mins}m` : `${mins}m`;
   }
 
+  function displayValue(value) {
+    return String(value).replace(/67/g, '6*');
+  }
+
   function render(s) {
     const percent = s && s.configured && s.has_data ? Number(s.percent) : NaN;
-    screenPercent.textContent = Number.isFinite(percent)
+    screenPercent.textContent = displayValue(Number.isFinite(percent)
       ? `${percent}%`
-      : '--%';
+      : '--%');
+    const headProgress = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 50;
+    printHead.setAttribute('transform', `translate(${headProgress * 1.44 - 72} 0)`);
 
     let mood = 'idle';
     let label = 'Not configured';
@@ -528,7 +555,7 @@
     }
     statusBadge.dataset.mood = mood;
     svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
-    statusText.textContent = label;
+    statusText.textContent = displayValue(label);
     let expression = 'neutral';
     if (!s || !s.configured || !s.connected || !s.has_data) {
       expression = 'worried';
@@ -543,11 +570,13 @@
     } else if (mood === 'run' && Number.isFinite(percent) && percent <= 5) {
       expression = 'worried';
     } else if (mood === 'run' && percent >= 90) {
-      expression = 'excited';
+      expression = 'near-finish';
     } else if (mood === 'run') {
       expression = 'happy';
     }
     svg.dataset.expression = expression;
+    svg.classList.toggle('printing', mood === 'run' && !s.warming
+      && Number.isFinite(percent) && percent < 90);
     const stateKey = [
       mood,
       s && s.connected ? 'connected' : 'disconnected',
@@ -580,17 +609,17 @@
     elapsedBadge.classList.toggle('visible', showTimes);
     remainingBadge.classList.toggle('visible', showTimes);
     if (showTimes) {
-      elapsedText.textContent = `~${formatDuration(elapsed)}`;
-      remainingText.textContent = formatDuration(remaining);
+      elapsedText.textContent = displayValue(`~${formatDuration(elapsed)}`);
+      remainingText.textContent = displayValue(formatDuration(remaining));
     }
     nozzleBadge.classList.toggle('visible', showWarmup && nozzleReady);
     bedBadge.classList.toggle('visible', showWarmup && bedReady);
     if (showWarmup && nozzleReady) {
-      nozzleText.textContent = `${s.nozzle_temp}° / ${s.nozzle_target}°`;
+      nozzleText.textContent = displayValue(`${s.nozzle_temp}° / ${s.nozzle_target}°`);
       nozzleFill.setAttribute('width', String(74 * Math.min(1, s.nozzle_temp / s.nozzle_target)));
     }
     if (showWarmup && bedReady) {
-      bedText.textContent = `${s.bed_temp}° / ${s.bed_target}°`;
+      bedText.textContent = displayValue(`${s.bed_temp}° / ${s.bed_target}°`);
       bedFill.setAttribute('width', String(74 * Math.min(1, s.bed_temp / s.bed_target)));
     }
     const layer = s && s.layer_num != null ? Number(s.layer_num) : NaN;
@@ -614,6 +643,13 @@
         shadow.classList.remove('progress-hop');
       }, 500);
     }
+    if (crossedMilestone) {
+      svg.classList.remove('milestone-blink');
+      void svg.getBoundingClientRect();
+      svg.classList.add('milestone-blink');
+      clearTimeout(milestoneBlinkTimer);
+      milestoneBlinkTimer = setTimeout(() => svg.classList.remove('milestone-blink'), 400);
+    }
     previousPercent = Number.isFinite(percent) ? percent : null;
     previousLayer = hasLayerProgress ? Math.round(layer) : null;
     previousMood = mood;
@@ -625,7 +661,7 @@
       const fillHeight = Math.max(2, 90 * progress);
       layerFill.setAttribute('y', String(204 - fillHeight));
       layerFill.setAttribute('height', String(fillHeight));
-      layerCount.textContent = `${Math.round(layer)}/${Math.round(totalLayers)}`;
+      layerCount.textContent = displayValue(`${Math.round(layer)}/${Math.round(totalLayers)}`);
     }
     const wifiLevel = s && s.wifi_level != null ? Number(s.wifi_level) : NaN;
     const hasWifiLevel = Number.isFinite(wifiLevel) && wifiLevel >= 1 && wifiLevel <= 3;
