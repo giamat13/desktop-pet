@@ -789,7 +789,13 @@ def _test_bambu_camera_protocol():
 def _test_bambu_cloud_camera():
     old_cloud_request = pet_app._bambu_cloud_request
     old_source_path = pet_app._bambu_camera_source_path
+    old_ensure_camera = pet_app._ensure_bambu_camera
     old_config_path = pet_app.CONFIG_PATH
+    old_camera_state = (
+        pet_app._bambu_camera_frame,
+        pet_app._bambu_camera_updated,
+        pet_app._bambu_camera_error,
+    )
     try:
         requests = []
 
@@ -823,6 +829,16 @@ def _test_bambu_cloud_camera():
         assert pet_app._bambu_camera_configuration(cloud_cfg) == {
             "configured": True, "mode": "cloud", "error": ""
         }
+        pet_app._ensure_bambu_camera = lambda cfg: None
+        pet_app._bambu_camera_frame = b"\xff\xd8test-frame\xff\xd9"
+        pet_app._bambu_camera_updated = time.monotonic()
+        pet_app._bambu_camera_error = ""
+        first_frame = pet_app.read_bambu_camera_snapshot(cloud_cfg)
+        assert first_frame["frame"] and first_frame["connected"]
+        unchanged_frame = pet_app.read_bambu_camera_snapshot(
+            cloud_cfg, first_frame["updated_at"]
+        )
+        assert unchanged_frame["connected"] and unchanged_frame["frame"] == ""
         pet_app._bambu_camera_source_path = lambda: ""
         assert pet_app._bambu_camera_configuration(cloud_cfg)["error"]
         lan_cfg = dict(cloud_cfg, camera_ip="192.168.1.10", camera_code="1234")
@@ -840,6 +856,12 @@ def _test_bambu_cloud_camera():
     finally:
         pet_app._bambu_cloud_request = old_cloud_request
         pet_app._bambu_camera_source_path = old_source_path
+        pet_app._ensure_bambu_camera = old_ensure_camera
+        (
+            pet_app._bambu_camera_frame,
+            pet_app._bambu_camera_updated,
+            pet_app._bambu_camera_error,
+        ) = old_camera_state
         pet_app.CONFIG_PATH = old_config_path
     print("OK: Bambu Cloud camera self-check passed")
 

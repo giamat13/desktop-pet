@@ -1791,11 +1791,22 @@ def _bambu_cloud_camera_worker(token, serial, stop_event, generation):
                 stop_event.wait(0.1)
             if stop_event.is_set():
                 return
-            library.Bambu_StartStream(tunnel, True)
+            deadline = time.monotonic() + 15
+            while not stop_event.is_set():
+                result = library.Bambu_StartStream(tunnel, True)
+                if result == 0:
+                    break
+                if result != 2:
+                    raise RuntimeError("Could not start the cloud camera stream")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Cloud camera stream start timed out")
+                stop_event.wait(0.1)
+            if stop_event.is_set():
+                return
             while not stop_event.is_set():
                 frame = _bambu_cloud_camera_read_sample(library, tunnel)
                 if frame is None:
-                    stop_event.wait(0.05)
+                    stop_event.wait(1 / 30)
                     continue
                 with _bambu_camera_lock:
                     if generation != _bambu_camera_gen:
@@ -1936,7 +1947,7 @@ def _stop_bambu_camera():
         stop_event.set()
 
 
-def read_bambu_camera_snapshot(cfg):
+def read_bambu_camera_snapshot(cfg, since_updated_at=None):
     configuration = _bambu_camera_configuration(cfg)
     if not configuration["configured"]:
         _ensure_bambu_camera(cfg)
@@ -1955,7 +1966,11 @@ def read_bambu_camera_snapshot(cfg):
     return {
         "configured": True,
         "connected": fresh,
-        "frame": base64.b64encode(frame).decode("ascii") if fresh else "",
+        "frame": (
+            base64.b64encode(frame).decode("ascii")
+            if fresh and (since_updated_at is None or updated > since_updated_at)
+            else ""
+        ),
         "updated_at": updated,
         "error": error if not fresh else "",
         "mode": configuration["mode"],
@@ -2702,13 +2717,13 @@ class Api:
                     log("Bambu print-only visibility failed:", exc)
         return status
 
-    def get_bambu_camera_snapshot(self):
+    def get_bambu_camera_snapshot(self, since_updated_at=None):
         if self._pet != "bambu":
             return None
         if self._hidden():
             _stop_bambu_camera()
             return None
-        return read_bambu_camera_snapshot(load_config("bambu"))
+        return read_bambu_camera_snapshot(load_config("bambu"), since_updated_at)
 
     def get_bambu_camera_config(self):
         if self._pet != "bambu":

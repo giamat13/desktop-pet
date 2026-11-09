@@ -712,7 +712,7 @@
     if (!cameraMonitorOpen || cameraPollInFlight || !window.pywebview?.api?.get_bambu_camera_snapshot) return;
     cameraPollInFlight = true;
     try {
-      const camera = await window.pywebview.api.get_bambu_camera_snapshot();
+      const camera = await window.pywebview.api.get_bambu_camera_snapshot(cameraLastUpdated);
       if (!camera || !camera.configured) {
         setCameraToggleAvailable(false);
         cameraFrame.setAttribute('visibility', 'hidden');
@@ -720,19 +720,19 @@
         cameraPlaceholderText.textContent = 'CAMERA NOT CONFIGURED';
         cameraPlaceholderText.setAttribute('font-size', '7');
       } else if (camera.frame) {
-        if (camera.updated_at !== cameraLastUpdated) {
-          cameraFrame.setAttribute('href', `data:image/jpeg;base64,${camera.frame}`);
-          cameraFrame.setAttribute('visibility', 'visible');
-          cameraPlaceholder.style.display = 'none';
-          cameraLastUpdated = camera.updated_at;
-        }
+        cameraFrame.setAttribute('href', `data:image/jpeg;base64,${camera.frame}`);
+        cameraFrame.setAttribute('visibility', 'visible');
+        cameraPlaceholder.style.display = 'none';
+        cameraLastUpdated = camera.updated_at;
       } else {
-        cameraFrame.setAttribute('visibility', 'hidden');
-        cameraPlaceholder.style.display = 'inline';
-        cameraPlaceholderText.textContent = camera.error
-          ? camera.error.toUpperCase()
-          : 'CONNECTING TO CAMERA…';
-        cameraPlaceholderText.setAttribute('font-size', camera.error ? '5.5' : '7');
+        if (!camera.connected || camera.error) {
+          cameraFrame.setAttribute('visibility', 'hidden');
+          cameraPlaceholder.style.display = 'inline';
+          cameraPlaceholderText.textContent = camera.error
+            ? camera.error.toUpperCase()
+            : 'CONNECTING TO CAMERA…';
+          cameraPlaceholderText.setAttribute('font-size', camera.error ? '5.5' : '7');
+        }
       }
     } catch (error) {
       console.error('Could not fetch Bambu camera frame');
@@ -780,8 +780,9 @@
       cameraPlaceholderText.textContent = 'CONNECTING TO CAMERA…';
       cameraPlaceholderText.setAttribute('font-size', '7');
       cameraLastUpdated = null;
+    } else {
+      pollCamera();
     }
-    if (cameraMonitorOpen) pollCamera();
   }
 
   cameraToggle.addEventListener('click', () => setCameraMonitorOpen(!cameraMonitorOpen));
@@ -807,10 +808,8 @@
     poll();
     pollCameraConfiguration();
     setInterval(poll, 1500);
-    setInterval(() => {
-      pollCameraConfiguration();
-      pollCamera();
-    }, 3000);
+    setInterval(pollCameraConfiguration, 3000);
+    setInterval(pollCamera, CAMERA_POLL_INTERVAL_MS);
   });
 
   function triggerJump() {
@@ -838,6 +837,7 @@
 
   let dragStartX, dragStartY, isDragging = false, movedDistance = 0;
   const DRAG_THRESHOLD = 6;
+  const CAMERA_POLL_INTERVAL_MS = 50;
 
   svg.addEventListener('mousedown', (e) => {
     if (e.button !== 0) {
