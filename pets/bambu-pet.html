@@ -868,13 +868,13 @@
     }
   });
 
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', (e) => {
     if (dragStartX === undefined) return;
     if (isDragging) {
       if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
         window.pywebview.api.drop();
       }
-    } else {
+    } else if (!(e.target instanceof Node) || !cameraToggle.contains(e.target)) {
       handlePetClick();
     }
     dragStartX = undefined;
