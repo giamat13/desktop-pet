@@ -17,8 +17,10 @@
     gap: 14px;
     padding: 18px 20px;
     box-sizing: border-box;
+    overflow-y: auto;
   }
   h1 { margin: 0; font-size: 16px; color: #B94A24; }
+  h1 small { font-size: 10px; font-weight: normal; color: #9A5A45; }
   .row { display: flex; flex-direction: column; gap: 6px; }
   /* An author `display: flex` outranks the UA stylesheet's [hidden] rule, so
      without this a hidden row still takes up its full height. */
@@ -72,6 +74,7 @@
     text-align: left;
   }
   .bambu-actions { display: flex; gap: 8px; }
+  details > summary { cursor: pointer; font-size: 12px; font-weight: bold; color: #B94A24; }
   .bambu-btn {
     flex: 1;
     padding: 8px;
@@ -90,7 +93,7 @@
 </style>
 </head>
 <body>
-  <h1>הגדרות החיה</h1>
+  <h1>הגדרות החיה <small>Ctrl+Shift+F10</small></h1>
 
   <div class="row">
     <span class="label">מיקום</span>
@@ -190,30 +193,57 @@
        the pet. The form is filled from get_bambu_connection(); the status line
        keeps refreshing while this window is open. -->
   <div class="row" id="bambuRow" hidden>
-    <span class="label">Printer connection</span>
+    <span class="label">חיבור למדפסת Bambu</span>
     <div class="modes" id="bambuModes">
-      <button data-bambu-mode="cloud">Cloud (Bambu account)</button>
-      <button data-bambu-mode="local">LAN (local network)</button>
+      <button data-bambu-mode="cloud">ענן — התחברות לחשבון (מומלץ)</button>
+      <button data-bambu-mode="local">רשת מקומית (LAN)</button>
     </div>
-    <label class="field"><span>Printer serial number</span>
-      <input id="bambuSerial" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
-    <div id="bambuCloudFields" class="fields">
-      <label class="field"><span>Account UID</span>
-        <input id="bambuUid" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
-      <label class="field"><span>Token</span>
-        <input id="bambuToken" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
+    <div class="fields" id="bambuCloudFields">
+      <span class="value">הכניסו את פרטי חשבון Bambu. הסיסמה משמשת להתחברות בלבד ולא נשמרת. אם תידרשו, יישלח אליכם קוד אימות בדוא״ל. לאחר ההתחברות פרטי החיבור יישמרו במחשב הזה, לא בקובצי הפרויקט.</span>
+      <label class="field"><span>דוא״ל החשבון</span>
+        <input id="bambuAccount" class="bambu-input" type="email" autocomplete="username" spellcheck="false"></label>
+      <label class="field"><span>סיסמת החשבון</span>
+        <input id="bambuPassword" class="bambu-input" type="password" autocomplete="current-password"></label>
+      <label class="field" id="bambuOtpField" hidden><span>קוד האימות שנשלח בדוא״ל</span>
+        <input id="bambuOtp" class="bambu-input" type="text" inputmode="numeric" autocomplete="one-time-code"></label>
+      <div class="bambu-actions">
+        <button class="bambu-btn" id="bambuLogin">התחברות ומילוי אוטומטי</button>
+      </div>
+      <span class="value" id="bambuLoginStatus" role="status" aria-live="polite"></span>
+      <div class="fields" id="bambuPrinterChoice" hidden>
+        <label class="field" id="bambuPrinterSelectField"><span>בחרו את המדפסת</span>
+          <select id="bambuPrinterSelect" class="bambu-input"></select></label>
+        <span class="value" id="bambuManualSerialHint" hidden>לא נמצאה מדפסת מקושרת. פתחו ״הגדרה ידנית״ והזינו מספר סידורי.</span>
+        <button class="bambu-btn" id="bambuUsePrinter">המשך עם המדפסת שנבחרה</button>
+      </div>
     </div>
-    <div id="bambuLocalFields" class="fields">
-      <label class="field"><span>Printer IP address</span>
-        <input id="bambuIp" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
-      <label class="field"><span>Access code (printer screen)</span>
-        <input id="bambuCode" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
-    </div>
-    <div class="bambu-actions">
-      <button class="bambu-btn secondary" id="bambuImport">Import from bambu-widget</button>
-      <button class="bambu-btn" id="bambuSave">Save & reconnect</button>
-    </div>
-    <span class="value" id="bambuImportHint"></span>
+    <details class="fields" id="bambuManualFields">
+      <summary>הגדרה ידנית / מתקדמת</summary>
+      <label class="field"><span>מספר סידורי של המדפסת</span>
+        <input id="bambuSerial" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
+      <div id="bambuCloudManualFields" class="fields">
+        <label class="field"><span>Account UID</span>
+          <input id="bambuUid" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
+        <label class="field"><span>Token</span>
+          <input id="bambuToken" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
+      </div>
+      <div id="bambuLocalFields" class="fields" hidden>
+        <span class="value">יש להפעיל במדפסת LAN Only ו־Developer Mode. השדות נשמרים אוטומטית.</span>
+        <label class="field"><span>כתובת IP של המדפסת</span>
+          <input id="bambuIp" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
+        <label class="field"><span>קוד גישה מהרשומות במדפסת</span>
+          <input id="bambuCode" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
+      </div>
+    </details>
+    <details class="fields" id="bambuCameraFields">
+      <summary>מצלמת Cloud אוטומטית / חיבור LAN חלופי</summary>
+      <span class="value">לאחר התחברות לחשבון Bambu המצלמה מתחברת דרך Cloud אוטומטית — אין צורך בכתובת IP או בקוד גישה. נדרש Bambu Studio מותקן כדי להשתמש ברכיב הווידאו שלו. השדות הבאים הם חלופת LAN בלבד.</span>
+      <label class="field"><span>כתובת IP מקומית (חלופת LAN)</span>
+        <input id="bambuCameraIp" class="bambu-input" type="text" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span>קוד גישה מקומי למצלמה (חלופת LAN)</span>
+        <input id="bambuCameraCode" class="bambu-input" type="password" autocomplete="off" spellcheck="false"></label>
+    </details>
+    <span class="value" id="bambuCameraStatus" role="status" aria-live="polite"></span>
     <span id="bambuStatus"></span>
   </div>
 
@@ -298,14 +328,27 @@
   const bambuButtons      = [...document.querySelectorAll('#bambuModes button')];
   const bambuCloudFields  = document.getElementById('bambuCloudFields');
   const bambuLocalFields  = document.getElementById('bambuLocalFields');
+  const bambuCloudManualFields = document.getElementById('bambuCloudManualFields');
+  const bambuManualFields = document.getElementById('bambuManualFields');
+  const bambuAccount      = document.getElementById('bambuAccount');
+  const bambuPassword     = document.getElementById('bambuPassword');
+  const bambuOtpField     = document.getElementById('bambuOtpField');
+  const bambuOtp          = document.getElementById('bambuOtp');
+  const bambuLoginBtn     = document.getElementById('bambuLogin');
+  const bambuLoginStatus  = document.getElementById('bambuLoginStatus');
+  const bambuPrinterChoice = document.getElementById('bambuPrinterChoice');
+  const bambuPrinterSelectField = document.getElementById('bambuPrinterSelectField');
+  const bambuPrinterSelect = document.getElementById('bambuPrinterSelect');
+  const bambuManualSerialHint = document.getElementById('bambuManualSerialHint');
+  const bambuUsePrinter   = document.getElementById('bambuUsePrinter');
   const bambuSerial       = document.getElementById('bambuSerial');
   const bambuUid          = document.getElementById('bambuUid');
   const bambuToken        = document.getElementById('bambuToken');
   const bambuIp           = document.getElementById('bambuIp');
   const bambuCode         = document.getElementById('bambuCode');
-  const bambuImportBtn    = document.getElementById('bambuImport');
-  const bambuSaveBtn      = document.getElementById('bambuSave');
-  const bambuImportHint   = document.getElementById('bambuImportHint');
+  const bambuCameraIp     = document.getElementById('bambuCameraIp');
+  const bambuCameraCode   = document.getElementById('bambuCameraCode');
+  const bambuCameraStatus = document.getElementById('bambuCameraStatus');
   const bambuStatus       = document.getElementById('bambuStatus');
 
   // System pet only - what each corner gauge can show instead of the fixed
@@ -514,43 +557,68 @@
   // only the status line is refreshed by the timer, never the inputs.
   let bambuMode = 'cloud';
   let bambuTimer = null;
+  let bambuImportedFromWidget = false;
 
   function setBambuMode(mode) {
     bambuMode = mode === 'local' ? 'local' : 'cloud';
     bambuButtons.forEach(b => b.classList.toggle('active', b.dataset.bambuMode === bambuMode));
     bambuCloudFields.hidden = bambuMode !== 'cloud';
     bambuLocalFields.hidden = bambuMode !== 'local';
+    bambuCloudManualFields.hidden = bambuMode !== 'cloud';
+    if (bambuMode === 'local') bambuManualFields.open = true;
   }
 
   function renderBambuStatus(s) {
     if (!s.configured) {
-      bambuStatus.textContent = 'Not connected. Enter your printer details or import them from bambu-widget.';
+      bambuStatus.textContent = 'לא מחובר. התחברו לחשבון Bambu או הגדירו חיבור ידני.';
     } else if (s.connected) {
-      bambuStatus.textContent = 'Connected to printer.';
+      bambuStatus.textContent = bambuImportedFromWidget || s.imported_from_widget
+        ? 'החיבור נטען אוטומטית מ־Bambu Widget והמדפסת מחוברת.'
+        : 'המדפסת מחוברת.';
     } else if (s.error) {
       bambuStatus.textContent = s.mode === 'cloud'
-        ? 'Connection failed. The cloud token may have expired; update it and reconnect.'
-        : 'Connection failed. Check the access code and make sure LAN Only is enabled.';
+        ? 'החיבור נכשל. ייתכן שתוקף ה־Token פג; התחברו מחדש לחשבון.'
+        : 'החיבור נכשל. בדקו את קוד הגישה וודאו שמצב LAN Only פעיל.';
     } else {
-      bambuStatus.textContent = 'Connecting…';
+      bambuStatus.textContent = 'מתחבר למדפסת…';
+    }
+  }
+
+  function renderBambuCameraStatus(s) {
+    if (s.camera_configured) {
+      bambuCameraStatus.textContent = s.camera_mode === 'cloud'
+        ? 'מצלמת Cloud מוכנה. לחצו על OPEN CAMERA שמעל המדפסת כדי לצפות.'
+        : 'מצלמת LAN מוכנה. לחצו על OPEN CAMERA שמעל המדפסת כדי לצפות.';
+    } else if (s.camera_error) {
+      bambuCameraStatus.textContent = s.camera_error;
+    } else {
+      bambuCameraStatus.textContent = 'התחברו לחשבון Bambu כדי להפעיל מצלמת Cloud; אין צורך בפרטי LAN.';
     }
   }
 
   function fillBambuForm(s) {
+    bambuImportedFromWidget = !!s.imported_from_widget;
     setBambuMode(s.mode);
     bambuSerial.value = s.serial || '';
     bambuUid.value = s.uid || '';
     bambuToken.value = s.token || '';
     bambuIp.value = s.ip || '';
     bambuCode.value = s.code || '';
-    bambuImportBtn.disabled = !s.widget_available;
-    bambuImportHint.textContent = s.widget_available ? '' : 'No bambu-widget settings found on this computer.';
+    bambuCameraIp.value = s.camera_ip || '';
+    bambuCameraCode.value = s.camera_code || '';
     renderBambuStatus(s);
+    renderBambuCameraStatus(s);
   }
 
   function refreshBambuStatus() {
     if (bambuRow.hidden || !api() || !api().get_bambu_connection) return;
-    api().get_bambu_connection().then((s) => { if (s) renderBambuStatus(s); });
+    api().get_bambu_connection().then((s) => {
+      if (s) {
+        bambuImportedFromWidget = bambuImportedFromWidget || !!s.imported_from_widget;
+        renderBambuStatus(s);
+        renderBambuCameraStatus(s);
+      }
+    });
   }
 
   function loadBambu() {
@@ -559,20 +627,114 @@
     if (!bambuTimer) bambuTimer = setInterval(refreshBambuStatus, 2000);
   }
 
-  bambuButtons.forEach(b => b.addEventListener('click', () => setBambuMode(b.dataset.bambuMode)));
-
-  bambuSaveBtn.addEventListener('click', () => {
+  function saveBambuConnection() {
     if (!api() || !api().set_bambu_connection) return;
-    bambuStatus.textContent = 'Saving…';
     api().set_bambu_connection(bambuMode, bambuUid.value, bambuToken.value,
                                bambuSerial.value, bambuIp.value, bambuCode.value)
-         .then((s) => { if (s) fillBambuForm(s); });
+         .then((s) => { if (s) renderBambuStatus(s); })
+         .catch(() => { bambuStatus.textContent = 'Could not save printer settings.'; });
+  }
+
+  bambuButtons.forEach(b => b.addEventListener('click', () => {
+    setBambuMode(b.dataset.bambuMode);
+    saveBambuConnection();
+  }));
+  [bambuSerial, bambuUid, bambuToken, bambuIp, bambuCode].forEach(input =>
+    input.addEventListener('change', saveBambuConnection));
+
+  bambuLoginBtn.addEventListener('click', () => {
+    if (!api() || !api().login_bambu_cloud) return;
+    bambuLoginBtn.disabled = true;
+    bambuLoginStatus.textContent = 'מתחבר לחשבון Bambu…';
+    const account = bambuAccount.value.trim();
+    const password = bambuPassword.value;
+    const code = bambuOtp.value.trim();
+    bambuPassword.value = '';
+    api().login_bambu_cloud(account, password, code).then((result) => {
+      if (result && result.error) {
+        bambuLoginStatus.textContent = result.error;
+        return;
+      }
+      if (result && result.requires_code) {
+        bambuOtpField.hidden = false;
+        bambuLoginBtn.textContent = 'אימות קוד ומילוי אוטומטי';
+        bambuOtp.focus();
+        bambuLoginStatus.textContent = 'נשלח קוד אימות לדוא״ל של חשבון Bambu. הזינו אותו ולחצו על הכפתור.';
+        return;
+      }
+      if (result && result.connection) {
+        fillBambuForm(result.connection);
+        bambuOtpField.hidden = true;
+        bambuOtp.value = '';
+        bambuLoginBtn.textContent = 'התחברות ומילוי אוטומטי';
+        bambuLoginStatus.textContent = 'ההתחברות הצליחה. פרטי המדפסת נשמרו אוטומטית במחשב.';
+        return;
+      }
+      if (result && result.choose_printer) {
+        bambuOtpField.hidden = true;
+        bambuOtp.value = '';
+        bambuLoginBtn.textContent = 'התחברות ומילוי אוטומטי';
+        bambuPrinterChoice.hidden = false;
+        bambuPrinterSelectField.hidden = result.manual_serial;
+        bambuManualSerialHint.hidden = !result.manual_serial;
+        if (result.manual_serial) bambuManualFields.open = true;
+        bambuPrinterSelect.replaceChildren();
+        (result.devices || []).forEach((device) => {
+          const option = document.createElement('option');
+          option.value = device.serial;
+          option.textContent = device.name ? `${device.name} (${device.serial})` : device.serial;
+          bambuPrinterSelect.appendChild(option);
+        });
+
+        bambuLoginStatus.textContent = (result.devices || []).length
+          ? 'בחרו איזו מדפסת לחבר.'
+          : 'הזינו מספר סידורי בהגדרה הידנית כדי להשלים את החיבור.';
+      }
+    }).catch((error) => {
+      bambuLoginStatus.textContent = error && error.message
+        ? error.message
+        : 'לא ניתן להתחבר לחשבון Bambu. בדקו את החיבור ונסו שוב.';
+    }).finally(() => { bambuLoginBtn.disabled = false; });
   });
 
-  bambuImportBtn.addEventListener('click', () => {
-    if (!api() || !api().import_bambu_widget) return;
-    api().import_bambu_widget().then((s) => { if (s) fillBambuForm(s); });
+  [bambuPassword, bambuOtp].forEach(input => input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !bambuLoginBtn.disabled) {
+      event.preventDefault();
+      bambuLoginBtn.click();
+    }
+  }));
+
+  bambuUsePrinter.addEventListener('click', () => {
+    if (!api() || !api().select_bambu_printer) return;
+    bambuUsePrinter.disabled = true;
+    const serial = bambuPrinterSelectField.hidden
+      ? bambuSerial.value.trim()
+      : bambuPrinterSelect.value;
+    api().select_bambu_printer(serial).then((result) => {
+      if (result && result.error) {
+        bambuLoginStatus.textContent = result.error;
+        return;
+      }
+      if (result && result.connection) {
+        fillBambuForm(result.connection);
+        bambuPrinterChoice.hidden = true;
+        bambuLoginStatus.textContent = 'החיבור למדפסת נשמר אוטומטית.';
+      }
+    }).catch(() => { bambuLoginStatus.textContent = 'לא ניתן לשמור את חיבור המדפסת.'; })
+      .finally(() => { bambuUsePrinter.disabled = false; });
   });
+
+  [bambuCameraIp, bambuCameraCode].forEach(input => input.addEventListener('change', () => {
+    if (!api() || !api().set_bambu_camera_connection) return;
+    api().set_bambu_camera_connection(bambuCameraIp.value, bambuCameraCode.value)
+         .then((s) => {
+           if (s) {
+             if (s.error) bambuCameraStatus.textContent = s.error;
+             else renderBambuCameraStatus(s);
+           }
+         })
+         .catch(() => { bambuCameraStatus.textContent = 'לא ניתן לשמור את הגדרות המצלמה.'; });
+  }));
 
   function seed(cfg) {
     cfg = cfg || {};

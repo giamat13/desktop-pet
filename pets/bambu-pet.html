@@ -32,7 +32,7 @@
 
   svg#bambuPetSvg {
     width: 300px;
-    height: 260px;
+    height: 420px;
     overflow: visible;
     cursor: pointer;
   }
@@ -310,7 +310,7 @@
 <body>
 <div class="stage" id="stage">
   <div id="petWrap">
-    <svg id="bambuPetSvg" viewBox="0 0 300 260" xmlns="http://www.w3.org/2000/svg">
+    <svg id="bambuPetSvg" viewBox="0 -160 300 420" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%"   stop-color="#4a4f62"/>
@@ -350,6 +350,25 @@
       <ellipse id="shadow" cx="150" cy="236" rx="66" ry="12" fill="url(#shadowGrad)"/>
 
       <g id="printer-root">
+        <g id="cameraMonitor" aria-label="Printer camera monitor" visibility="hidden">
+          <rect x="64" y="-160" width="172" height="112" rx="10" fill="#121720" stroke="#828b9c" stroke-width="2"/>
+          <rect x="70" y="-154" width="160" height="94" rx="5" fill="#070a0f" stroke="#333b49" stroke-width="1"/>
+          <image id="cameraFrame" x="71" y="-153" width="158" height="92" preserveAspectRatio="xMidYMid slice" visibility="hidden"/>
+          <g id="cameraPlaceholder">
+            <path d="M136 -120 L145 -127 H156 L165 -120 V-104 H136 Z" fill="none" stroke="#7f8999" stroke-width="2.5" stroke-linejoin="round"/>
+            <circle cx="150.5" cy="-115.5" r="5" fill="none" stroke="#7f8999" stroke-width="2.5"/>
+            <text id="cameraPlaceholderText" x="150" y="-89" text-anchor="middle" fill="#9ba3b4" font-family="Segoe UI, sans-serif" font-size="7" font-weight="700" letter-spacing="0.8">CAMERA NOT CONFIGURED</text>
+          </g>
+          <circle cx="150" cy="-157" r="1.5" fill="#70efb6"/>
+          <rect x="139" y="-48" width="22" height="78" rx="4" fill="url(#railGrad)" stroke="#343a48" stroke-width="1"/>
+          <rect x="125" y="27" width="50" height="8" rx="4" fill="url(#lidGrad)" stroke="#343a48" stroke-width="1"/>
+        </g>
+        <g id="cameraToggle" role="button" tabindex="0" aria-label="Open camera screen"
+           aria-hidden="true" visibility="hidden" style="cursor:pointer">
+          <rect x="108" y="40" width="84" height="20" rx="10" fill="#121720" stroke="#828b9c" stroke-width="1.5"/>
+          <circle id="cameraToggleLight" cx="118" cy="50" r="2.5" fill="#70efb6"/>
+          <text id="cameraToggleText" x="152" y="53" text-anchor="middle" fill="#e7ebf2" font-family="Segoe UI, sans-serif" font-size="7" font-weight="700" letter-spacing="0.35">OPEN CAMERA</text>
+        </g>
         <g id="printer-hit">
           <!-- feet -->
           <rect x="110" y="210" width="24" height="39" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
@@ -491,6 +510,14 @@
   const printHead   = document.getElementById('head');
   const shadow      = document.getElementById('shadow');
   const screenPercent = document.getElementById('screenPercent');
+  const cameraFrame = document.getElementById('cameraFrame');
+  const cameraMonitor = document.getElementById('cameraMonitor');
+  const cameraToggle = document.getElementById('cameraToggle');
+  const cameraToggleText = document.getElementById('cameraToggleText');
+  let cameraMonitorOpen = false;
+  let cameraToggleAvailable = false;
+  const cameraPlaceholder = document.getElementById('cameraPlaceholder');
+  const cameraPlaceholderText = document.getElementById('cameraPlaceholderText');
   const statusBadge = document.getElementById('statusBadge');
   const statusText  = document.getElementById('statusText');
   const elapsedBadge = document.getElementById('elapsedBadge');
@@ -515,6 +542,8 @@
   let previousLayer = null;
   let progressHopTimer = null;
   let milestoneBlinkTimer = null;
+  let cameraLastUpdated = null;
+  let cameraPollInFlight = false;
 
   function applyPetScale(pct) {
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
@@ -679,6 +708,90 @@
     if (hasWifiLevel) wifiIndicator.dataset.level = String(Math.round(wifiLevel));
   }
 
+  async function pollCamera() {
+    if (!cameraMonitorOpen || cameraPollInFlight || !window.pywebview?.api?.get_bambu_camera_snapshot) return;
+    cameraPollInFlight = true;
+    try {
+      const camera = await window.pywebview.api.get_bambu_camera_snapshot();
+      if (!camera || !camera.configured) {
+        setCameraToggleAvailable(false);
+        cameraFrame.setAttribute('visibility', 'hidden');
+        cameraPlaceholder.style.display = 'inline';
+        cameraPlaceholderText.textContent = 'CAMERA NOT CONFIGURED';
+        cameraPlaceholderText.setAttribute('font-size', '7');
+      } else if (camera.frame) {
+        if (camera.updated_at !== cameraLastUpdated) {
+          cameraFrame.setAttribute('href', `data:image/jpeg;base64,${camera.frame}`);
+          cameraFrame.setAttribute('visibility', 'visible');
+          cameraPlaceholder.style.display = 'none';
+          cameraLastUpdated = camera.updated_at;
+        }
+      } else {
+        cameraFrame.setAttribute('visibility', 'hidden');
+        cameraPlaceholder.style.display = 'inline';
+        cameraPlaceholderText.textContent = camera.error
+          ? camera.error.toUpperCase()
+          : 'CONNECTING TO CAMERA…';
+        cameraPlaceholderText.setAttribute('font-size', camera.error ? '5.5' : '7');
+      }
+    } catch (error) {
+      console.error('Could not fetch Bambu camera frame');
+      cameraFrame.setAttribute('visibility', 'hidden');
+      cameraPlaceholder.style.display = 'inline';
+      cameraPlaceholderText.textContent = 'CAMERA CONNECTION ERROR';
+      cameraPlaceholderText.setAttribute('font-size', '7');
+    } finally {
+      cameraPollInFlight = false;
+    }
+  }
+
+  function setCameraToggleAvailable(available) {
+    cameraToggleAvailable = !!available;
+    cameraToggle.setAttribute('visibility', cameraToggleAvailable ? 'visible' : 'hidden');
+    cameraToggle.setAttribute('aria-hidden', cameraToggleAvailable ? 'false' : 'true');
+    if (!cameraToggleAvailable && cameraMonitorOpen) setCameraMonitorOpen(false);
+  }
+
+  async function pollCameraConfiguration() {
+    if (!window.pywebview?.api?.get_bambu_camera_config) return;
+    try {
+      const camera = await window.pywebview.api.get_bambu_camera_config();
+      setCameraToggleAvailable(!!(camera && camera.configured));
+    } catch (error) {
+      console.error('Could not verify Bambu camera configuration');
+      setCameraToggleAvailable(false);
+    }
+  }
+
+  function setCameraMonitorOpen(open) {
+    cameraMonitorOpen = !!open && cameraToggleAvailable;
+    cameraMonitor.setAttribute('visibility', cameraMonitorOpen ? 'visible' : 'hidden');
+    cameraToggle.setAttribute('aria-label', cameraMonitorOpen ? 'Close camera screen' : 'Open camera screen');
+    cameraToggleText.textContent = cameraMonitorOpen ? 'CLOSE CAMERA' : 'OPEN CAMERA';
+    const api = window.pywebview?.api;
+    if (api?.set_bambu_camera_stream) {
+      api.set_bambu_camera_stream(cameraMonitorOpen).catch(() => {
+        console.error('Could not update Bambu camera stream state');
+      });
+    }
+    if (!cameraMonitorOpen) {
+      cameraFrame.setAttribute('visibility', 'hidden');
+      cameraPlaceholder.style.display = 'inline';
+      cameraPlaceholderText.textContent = 'CONNECTING TO CAMERA…';
+      cameraPlaceholderText.setAttribute('font-size', '7');
+      cameraLastUpdated = null;
+    }
+    if (cameraMonitorOpen) pollCamera();
+  }
+
+  cameraToggle.addEventListener('click', () => setCameraMonitorOpen(!cameraMonitorOpen));
+  cameraToggle.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      setCameraMonitorOpen(!cameraMonitorOpen);
+    }
+  });
+
   // Polled from Python's read_bambu_status() - see the Bambu section in pet_app.py.
   function poll() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_bambu_status)) return;
@@ -692,7 +805,12 @@
       });
     }
     poll();
+    pollCameraConfiguration();
     setInterval(poll, 1500);
+    setInterval(() => {
+      pollCameraConfiguration();
+      pollCamera();
+    }, 3000);
   });
 
   function triggerJump() {

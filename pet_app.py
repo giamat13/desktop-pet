@@ -7,11 +7,16 @@ and falls back down to the taskbar when released.
 import os
 import sys
 import glob
+import base64
+import ipaddress
 import json
 import math
 import ssl
+import socket
+import struct
 import time
 import ctypes
+import ctypes.wintypes
 import subprocess
 import threading
 import tempfile
@@ -34,7 +39,7 @@ PETS = {
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
-BAMBU_WIN_W, BAMBU_WIN_H = 500, 260
+BAMBU_WIN_W, BAMBU_WIN_H = 500, 420
 DEFAULT_TASKBAR_MARGIN = 46  # used only as an initial guess for calibration
 
 CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet")
@@ -1464,6 +1469,53 @@ def read_discord_voice_state():
 BAMBU_API = "https://api.bambulab.com"
 BAMBU_CLOUD_HOST = "us.mqtt.bambulab.com"
 BAMBU_MQTT_PORT = 8883
+BAMBU_CAMERA_PORT = 6000
+BAMBU_CLOUD_CAMERA_PATH = "/v1/iot-service/api/user/ttcode"
+# Bambu Lab CA bundle from https://github.com/Doridian/OpenBambuAPI.
+BAMBU_CAMERA_CA = os.path.join(APP_DIR, "pets", "bambu-ca.pem")
+
+
+def _bambu_cloud_request(path, body=None, token=None):
+    import urllib.error
+    import urllib.request
+
+    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(
+        BAMBU_API + path,
+        data=json.dumps(body).encode("utf-8") if body is not None else None,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            result = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"Bambu Cloud returned HTTP {exc.code}") from None
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"Could not reach Bambu Cloud: {exc.reason if hasattr(exc, 'reason') else exc}") from None
+    if not isinstance(result, dict):
+        raise RuntimeError("Bambu Cloud returned an unexpected response")
+    return result
+
+
+def _bambu_cloud_account_data(token):
+    profile = _bambu_cloud_request("/v1/design-user-service/my/preference", token=token)
+    uid = profile.get("uid")
+    if not uid:
+        raise RuntimeError("Could not retrieve the Bambu account UID")
+    result = _bambu_cloud_request("/v1/iot-service/api/user/bind", token=token)
+    devices = result.get("devices", [])
+    if not isinstance(devices, list):
+        raise RuntimeError("Bambu Cloud returned an invalid printer list")
+    printers = [
+        {"serial": str(device.get("dev_id", "")).strip(),
+         "name": str(device.get("name", "")).strip()}
+        for device in devices
+        if isinstance(device, dict) and str(device.get("dev_id", "")).strip()
+    ]
+    return str(uid), printers
+
 
 # gcode_state -> (Hebrew label, pet mood). Same keys as bambu-widget's STATES.
 BAMBU_STATES = {
@@ -1483,6 +1535,16 @@ _bambu_key = None     # connection settings the running client was started with
 _bambu_client = None  # the running paho client, if any
 _bambu_gen = 0        # bumped on every reconnect; callbacks from an older client are ignored
 BAMBU_CONN_KEYS = ("mode", "uid", "token", "serial", "host", "ip", "code")
+_bambu_camera_lock = threading.Lock()
+_bambu_camera_key = None
+_bambu_camera_stop = None
+_bambu_camera_gen = 0
+_bambu_camera_frame = None
+_bambu_camera_updated = 0.0
+_bambu_camera_error = ""
+_bambu_camera_dll_lock = threading.Lock()
+_bambu_camera_dll = None
+_bambu_camera_dll_dirs = []
 
 
 def pet_window_size(pet):
@@ -1518,9 +1580,8 @@ def _bambu_widget_connection():
 
 def import_bambu_widget_config(force=False):
     """
-    Copy bambu-widget's saved connection into this pet. Without `force` it only
-    runs while this pet has no working connection of its own, so a value the
-    user set in the settings window is never overwritten. True if it imported.
+    Import bambu-widget's saved connection only when this pet has no working
+    connection, so a value the user set here is never overwritten.
     """
     if not force and _bambu_ready(load_config("bambu")):
         return False
@@ -1547,6 +1608,358 @@ def bambu_apply_report(data, raw):
         return False
     data.update(p)
     return True
+
+
+def _bambu_camera_auth_packet(access_code):
+    code = access_code.encode("ascii")
+    if len(code) > 32:
+        raise ValueError("Bambu camera access code is too long")
+    return (
+        struct.pack("<IIII", 0x40, 0x3000, 0, 0)
+        + b"bblp".ljust(32, b"\0")
+        + code.ljust(32, b"\0")
+    )
+
+
+def _bambu_camera_ip(host):
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if address.version != 4 or not address.is_private or address.is_loopback or address.is_multicast:
+        return None
+    return str(address)
+
+
+def _bambu_camera_read_exact(sock, size):
+    chunks = bytearray()
+    while len(chunks) < size:
+        chunk = sock.recv(size - len(chunks))
+        if not chunk:
+            raise ConnectionError("Printer camera closed the connection")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def _bambu_camera_read_frame(sock):
+    header = _bambu_camera_read_exact(sock, 16)
+    frame_size = struct.unpack("<I", header[:4])[0]
+    if frame_size < 4 or frame_size > 16 * 1024 * 1024:
+        raise ValueError("Invalid Bambu camera frame size")
+    frame = _bambu_camera_read_exact(sock, frame_size)
+    if not frame.startswith(b"\xff\xd8") or not frame.endswith(b"\xff\xd9"):
+        raise ValueError("Invalid JPEG from Bambu camera")
+    return frame
+
+
+def _bambu_camera_failure_message(exc):
+    if isinstance(exc, ssl.SSLCertVerificationError):
+        return "Camera certificate validation failed"
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "Camera connection timed out"
+    if isinstance(exc, ConnectionRefusedError):
+        return "Camera connection refused; check LAN camera settings"
+    if isinstance(exc, ValueError):
+        return "Invalid response from printer camera"
+    return "Could not connect to printer camera"
+
+
+def _bambu_camera_source_path():
+    appdata = os.getenv("APPDATA") or ""
+    local_appdata = os.getenv("LOCALAPPDATA") or ""
+    program_files = os.getenv("ProgramFiles") or ""
+    candidates = [
+        os.path.join(appdata, "BambuStudio", "plugins", "BambuSource.dll"),
+        os.path.join(local_appdata, "Programs", "BambuStudio", "plugins", "BambuSource.dll"),
+        os.path.join(program_files, "Bambu Studio", "plugins", "BambuSource.dll"),
+        os.path.join(program_files, "BambuStudio", "plugins", "BambuSource.dll"),
+    ]
+    return next((path for path in candidates if path and os.path.isfile(path)), "")
+
+
+def _bambu_load_camera_dll():
+    global _bambu_camera_dll
+    if sys.platform != "win32":
+        raise RuntimeError("Bambu Studio's camera components are available only on Windows")
+    with _bambu_camera_dll_lock:
+        if _bambu_camera_dll is not None:
+            return _bambu_camera_dll
+        path = _bambu_camera_source_path()
+        if not path:
+            raise RuntimeError("Install Bambu Studio to enable the Cloud camera")
+        for directory in (os.path.dirname(path), os.path.dirname(os.path.dirname(path))):
+            if directory and os.path.isdir(directory):
+                try:
+                    _bambu_camera_dll_dirs.append(os.add_dll_directory(directory))
+                except OSError:
+                    pass
+        try:
+            library = ctypes.WinDLL(path)
+            library.Bambu_Create.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p]
+            library.Bambu_Create.restype = ctypes.c_int
+            library.Bambu_Open.argtypes = [ctypes.c_void_p]
+            library.Bambu_Open.restype = ctypes.c_int
+            library.Bambu_StartStream.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+            library.Bambu_StartStream.restype = ctypes.c_int
+            library.Bambu_ReadSample.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(_BambuCameraSample),
+            ]
+            library.Bambu_ReadSample.restype = ctypes.c_int
+            library.Bambu_Close.argtypes = [ctypes.c_void_p]
+            library.Bambu_Destroy.argtypes = [ctypes.c_void_p]
+        except (AttributeError, OSError):
+            raise RuntimeError("Could not load Bambu Studio's camera components") from None
+        _bambu_camera_dll = library
+        return library
+
+
+class _BambuCameraSample(ctypes.Structure):
+    _fields_ = [
+        ("track", ctypes.c_int),
+        ("size", ctypes.c_int),
+        ("flags", ctypes.c_int),
+        ("buffer", ctypes.POINTER(ctypes.c_ubyte)),
+        ("decode_time", ctypes.c_ulonglong),
+    ]
+
+
+def _bambu_cloud_camera_session(cfg):
+    token = str(cfg.get("token", "")).strip()
+    serial = str(cfg.get("serial", "")).strip()
+    if not token or not serial:
+        raise RuntimeError("Bambu Cloud camera is not configured")
+    result = _bambu_cloud_request(
+        BAMBU_CLOUD_CAMERA_PATH,
+        body={"dev_id": serial},
+        token=token,
+    )
+    fields = ("ttcode", "authkey", "passwd")
+    if any(not result.get(field) for field in fields):
+        raise RuntimeError("Bambu Cloud rejected the camera session request")
+    from urllib.parse import quote
+
+    query = {
+        "uid": result["ttcode"],
+        "authkey": result["authkey"],
+        "passwd": result["passwd"],
+        "region": result.get("region") or "us",
+        "device": serial,
+        "user": "bblp",
+    }
+    return "bambu:///tutk?" + "&".join(
+        f"{key}={quote(str(value), safe='')}" for key, value in query.items()
+    )
+
+
+def _bambu_cloud_camera_read_sample(library, tunnel):
+    sample = _BambuCameraSample()
+    result = library.Bambu_ReadSample(tunnel, ctypes.byref(sample))
+    if result == 2:
+        return None
+    if result != 0:
+        raise RuntimeError("Cloud camera stream read failed")
+    if not sample.buffer or sample.size <= 0 or sample.size > 16 * 1024 * 1024:
+        raise RuntimeError("Cloud camera returned an invalid image")
+    frame = ctypes.string_at(sample.buffer, sample.size)
+    if not frame.startswith(b"\xff\xd8") or not frame.endswith(b"\xff\xd9"):
+        raise RuntimeError("Cloud camera returned an unsupported image format")
+    return frame
+
+
+def _bambu_cloud_camera_worker(token, serial, stop_event, generation):
+    global _bambu_camera_frame, _bambu_camera_updated, _bambu_camera_error
+    retry_delay = 3
+    while not stop_event.is_set():
+        tunnel = ctypes.c_void_p()
+        library = None
+        try:
+            library = _bambu_load_camera_dll()
+            url = _bambu_cloud_camera_session({"token": token, "serial": serial})
+            result = library.Bambu_Create(ctypes.byref(tunnel), url.encode("utf-8"))
+            if result != 0 or not tunnel.value:
+                raise RuntimeError("Could not create the cloud camera stream")
+            deadline = time.monotonic() + 30
+            while not stop_event.is_set():
+                result = library.Bambu_Open(tunnel)
+                if result == 0:
+                    break
+                if result != 2:
+                    raise RuntimeError("Could not connect to the cloud camera")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Cloud camera connection timed out")
+                stop_event.wait(0.1)
+            if stop_event.is_set():
+                return
+            library.Bambu_StartStream(tunnel, True)
+            while not stop_event.is_set():
+                frame = _bambu_cloud_camera_read_sample(library, tunnel)
+                if frame is None:
+                    stop_event.wait(0.05)
+                    continue
+                with _bambu_camera_lock:
+                    if generation != _bambu_camera_gen:
+                        return
+                    _bambu_camera_frame = frame
+                    _bambu_camera_updated = time.monotonic()
+                    _bambu_camera_error = ""
+                retry_delay = 3
+        except Exception as exc:
+            message = str(exc)
+            if "Bambu Cloud returned HTTP" in message:
+                message = "Sign in to Bambu again"
+            elif "Could not reach Bambu Cloud" in message:
+                message = "Bambu Cloud is offline"
+            elif not message.startswith(("Install Bambu Studio", "Bambu Studio's camera")):
+                message = message if message.startswith("Cloud camera") else "Cloud camera connection failed"
+            with _bambu_camera_lock:
+                if generation == _bambu_camera_gen:
+                    _bambu_camera_error = message
+            stop_event.wait(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)
+        finally:
+            if library is not None and tunnel.value:
+                try:
+                    library.Bambu_Close(tunnel)
+                finally:
+                    library.Bambu_Destroy(tunnel)
+
+
+def _bambu_camera_worker(host, serial, access_code, stop_event, generation):
+    global _bambu_camera_frame, _bambu_camera_updated, _bambu_camera_error
+    while not stop_event.is_set():
+        try:
+            context = ssl.create_default_context(cafile=BAMBU_CAMERA_CA)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
+            with socket.create_connection((host, BAMBU_CAMERA_PORT), timeout=5) as raw:
+                raw.settimeout(10)
+                with context.wrap_socket(raw, server_hostname=serial) as camera:
+                    camera.sendall(_bambu_camera_auth_packet(access_code))
+                    while not stop_event.is_set():
+                        frame = _bambu_camera_read_frame(camera)
+                        with _bambu_camera_lock:
+                            if generation != _bambu_camera_gen:
+                                return
+                            _bambu_camera_frame = frame
+                            _bambu_camera_updated = time.monotonic()
+                            _bambu_camera_error = ""
+        except (OSError, ssl.SSLError, ValueError, ConnectionError) as exc:
+            with _bambu_camera_lock:
+                if generation == _bambu_camera_gen:
+                    _bambu_camera_error = _bambu_camera_failure_message(exc)
+            stop_event.wait(3)
+
+
+def _bambu_camera_configuration(cfg):
+    if not isinstance(cfg, dict):
+        return {"configured": False, "mode": "", "error": ""}
+    serial = str(cfg.get("serial", "")).strip()
+    cloud_ready = all(str(cfg.get(key) or "").strip() for key in ("uid", "token", "serial"))
+    if cloud_ready and _bambu_camera_source_path():
+        return {"configured": True, "mode": "cloud", "error": ""}
+    host = _bambu_camera_ip(str(cfg.get("camera_ip", "")).strip()) or ""
+    access_code = str(cfg.get("camera_code", "")).strip()
+    if host and access_code and serial:
+        return {"configured": True, "mode": "local", "error": ""}
+    if cloud_ready:
+        return {
+            "configured": False,
+            "mode": "cloud",
+            "error": "Install Bambu Studio on this PC to enable the Cloud camera.",
+        }
+    return {"configured": False, "mode": "", "error": ""}
+
+
+def _ensure_bambu_camera(cfg):
+    global _bambu_camera_key, _bambu_camera_stop, _bambu_camera_gen
+    global _bambu_camera_frame, _bambu_camera_updated, _bambu_camera_error
+    if not isinstance(cfg, dict):
+        cfg = {}
+    configuration = _bambu_camera_configuration(cfg)
+    mode = configuration["mode"] if configuration["configured"] else ""
+    host = _bambu_camera_ip(str(cfg.get("camera_ip", "")).strip()) or ""
+    access_code = str(cfg.get("camera_code", "")).strip()
+    serial = str(cfg.get("serial", "")).strip()
+    if mode == "cloud":
+        token = str(cfg.get("token", "")).strip()
+        key = ("cloud", str(cfg.get("uid", "")).strip(), token, serial)
+        worker_target = _bambu_cloud_camera_worker
+        worker_args = (token, serial)
+    elif mode == "local":
+        key = ("local", host, access_code, serial)
+        worker_target = _bambu_camera_worker
+        worker_args = (host, serial, access_code)
+    else:
+        key = ("unconfigured",)
+        worker_target = None
+        worker_args = ()
+    old_stop = None
+    worker = None
+    with _bambu_camera_lock:
+        if key == _bambu_camera_key:
+            return
+        old_stop = _bambu_camera_stop
+        _bambu_camera_gen += 1
+        generation = _bambu_camera_gen
+        _bambu_camera_key = key
+        _bambu_camera_stop = None
+        _bambu_camera_frame = None
+        _bambu_camera_updated = 0.0
+        _bambu_camera_error = configuration["error"]
+        if worker_target:
+            stop_event = threading.Event()
+            _bambu_camera_stop = stop_event
+            worker = threading.Thread(
+                target=worker_target,
+                args=(*worker_args, stop_event, generation),
+                name="BambuCamera",
+                daemon=True,
+            )
+    if old_stop:
+        old_stop.set()
+    if worker:
+        worker.start()
+
+
+def _stop_bambu_camera():
+    global _bambu_camera_key, _bambu_camera_stop, _bambu_camera_gen
+    global _bambu_camera_frame, _bambu_camera_updated, _bambu_camera_error
+    with _bambu_camera_lock:
+        stop_event = _bambu_camera_stop
+        _bambu_camera_gen += 1
+        _bambu_camera_key = None
+        _bambu_camera_stop = None
+        _bambu_camera_frame = None
+        _bambu_camera_updated = 0.0
+        _bambu_camera_error = ""
+    if stop_event:
+        stop_event.set()
+
+
+def read_bambu_camera_snapshot(cfg):
+    configuration = _bambu_camera_configuration(cfg)
+    if not configuration["configured"]:
+        _ensure_bambu_camera(cfg)
+        return {
+            "configured": False,
+            "connected": False,
+            "frame": "",
+            "error": configuration["error"],
+        }
+    _ensure_bambu_camera(cfg)
+    with _bambu_camera_lock:
+        frame = _bambu_camera_frame
+        updated = _bambu_camera_updated
+        error = _bambu_camera_error
+    fresh = frame is not None and time.monotonic() - updated < 12
+    return {
+        "configured": True,
+        "connected": fresh,
+        "frame": base64.b64encode(frame).decode("ascii") if fresh else "",
+        "updated_at": updated,
+        "error": error if not fresh else "",
+        "mode": configuration["mode"],
+    }
 
 
 def bambu_summary(configured, data, connected, error):
@@ -2135,7 +2548,51 @@ def get_pet_config(pet):
 
 def _settings_height(pet):
     """Window height for a pet's settings window: each pet shows a different number of rows."""
-    return {"claude": 590, "system": 490, "bambu": 850}.get(pet, 410)
+    return {"claude": 590, "system": 490, "bambu": 950}.get(pet, 410)
+
+
+def _start_settings_hotkey(api):
+    """Register Ctrl+Shift+F10 globally and open the shared settings window."""
+    if sys.platform != "win32":
+        return
+
+    def _listen():
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        register_hotkey = user32.RegisterHotKey
+        register_hotkey.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_uint, ctypes.c_uint)
+        register_hotkey.restype = ctypes.c_bool
+        unregister_hotkey = user32.UnregisterHotKey
+        unregister_hotkey.argtypes = (ctypes.c_void_p, ctypes.c_int)
+        unregister_hotkey.restype = ctypes.c_bool
+        get_message = user32.GetMessageW
+        get_message.argtypes = (ctypes.POINTER(ctypes.wintypes.MSG), ctypes.c_void_p,
+                                ctypes.c_uint, ctypes.c_uint)
+        get_message.restype = ctypes.c_int
+
+        hotkey_id = 1
+        modifiers = 0x0002 | 0x0004 | 0x4000  # MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT
+        key = 0x79  # VK_F10
+        if not register_hotkey(None, hotkey_id, modifiers, key):
+            log("Settings hotkey Ctrl+Shift+F10 registration failed:",
+                ctypes.get_last_error())
+            return
+
+        try:
+            message = ctypes.wintypes.MSG()
+            while True:
+                result = get_message(ctypes.byref(message), None, 0, 0)
+                if result <= 0:
+                    if result < 0:
+                        log("Settings hotkey message loop failed:", ctypes.get_last_error())
+                    break
+                if message.message == 0x0312:  # WM_HOTKEY
+                    api.open_settings_window()
+        except Exception as exc:
+            log("Settings hotkey listener failed:", exc)
+        finally:
+            unregister_hotkey(None, hotkey_id)
+
+    threading.Thread(target=_listen, name="SettingsHotkey", daemon=True).start()
 
 
 class Api:
@@ -2223,7 +2680,10 @@ class Api:
     def get_bambu_status(self):
         """Polled from JS to draw the print progress. None for every other
         pet, same gating as get_media()."""
-        if self._pet != "bambu" or self._hidden():
+        if self._pet != "bambu":
+            return None
+        if self._hidden():
+            _stop_bambu_camera()
             return None
         status = read_bambu_status()
         cfg = load_config("bambu")
@@ -2233,6 +2693,7 @@ class Api:
                 try:
                     if self._window:
                         if should_hide:
+                            _stop_bambu_camera()
                             self._window.hide()
                         else:
                             _show_pet_window(self._window, "bambu")
@@ -2240,6 +2701,29 @@ class Api:
                 except Exception as exc:
                     log("Bambu print-only visibility failed:", exc)
         return status
+
+    def get_bambu_camera_snapshot(self):
+        if self._pet != "bambu":
+            return None
+        if self._hidden():
+            _stop_bambu_camera()
+            return None
+        return read_bambu_camera_snapshot(load_config("bambu"))
+
+    def get_bambu_camera_config(self):
+        if self._pet != "bambu":
+            return None
+        return _bambu_camera_configuration(load_config("bambu"))
+
+    def set_bambu_camera_stream(self, enabled):
+        if self._pet != "bambu":
+            return None
+        if not bool(enabled) or self._hidden():
+            _stop_bambu_camera()
+            return _bambu_camera_configuration(load_config("bambu"))
+        cfg = load_config("bambu")
+        _ensure_bambu_camera(cfg)
+        return _bambu_camera_configuration(cfg)
 
     def run_boost(self):
         """Boost button: download + launch 100RAMoptimal in QuickClean mode.
@@ -2254,6 +2738,7 @@ class Api:
         """Middle-click the pet -> open settings in its own native window."""
         try:
             if self._settings_window is not None:
+                self._settings_window.show()
                 return  # already open
             sapi = SettingsApi(self._window, self.screen_h, self._pet)
             sw = webview.create_window(
@@ -2332,6 +2817,8 @@ class SettingsApi:
         self._pet_window = pet_window
         self._pet = pet  # config namespace: "claude" or "vlc"
         self.screen_h = screen_h
+        self._bambu_login_account = ""
+        self._bambu_login_pending = None
 
     def get_pet_config(self):
         return get_pet_config(self._pet)
@@ -2566,8 +3053,10 @@ class SettingsApi:
         """
         if self._pet != "bambu":
             return None
+        imported_from_widget = import_bambu_widget_config()
         cfg = load_config("bambu")
         status = read_bambu_status()
+        camera = _bambu_camera_configuration(cfg)
         return {
             "mode": cfg.get("mode") if cfg.get("mode") in ("cloud", "local") else "cloud",
             "uid": cfg.get("uid", ""),
@@ -2575,11 +3064,75 @@ class SettingsApi:
             "serial": cfg.get("serial", ""),
             "ip": cfg.get("ip", ""),
             "code": cfg.get("code", ""),
+            "camera_ip": cfg.get("camera_ip", ""),
+            "camera_code": cfg.get("camera_code", ""),
+            "camera_configured": camera["configured"],
+            "camera_mode": camera["mode"],
+            "camera_error": camera["error"],
             "configured": status["configured"],
             "connected": status["connected"],
             "error": status["error"],
-            "widget_available": _bambu_widget_connection() is not None,
+            "imported_from_widget": imported_from_widget,
         }
+
+    def login_bambu_cloud(self, account, password="", code=""):
+        if self._pet != "bambu":
+            return {"error": "Cloud login is available only in Bambu settings."}
+        account = str(account or "").strip()
+        password = str(password or "")
+        code = str(code or "").strip()
+        if not account:
+            return {"error": "Enter your Bambu account email."}
+
+        if code:
+            if account != self._bambu_login_account:
+                return {"error": "The verification code must match the account that requested it."}
+            response = _bambu_cloud_request(
+                "/v1/user-service/user/login", {"account": account, "code": code}
+            )
+        else:
+            if not password:
+                return {"error": "Enter your Bambu account password."}
+            response = _bambu_cloud_request(
+                "/v1/user-service/user/login", {"account": account, "password": password}
+            )
+
+        token = response.get("accessToken")
+        if not token:
+            if code:
+                return {"error": "Login failed. Check the email and verification code."}
+            self._bambu_login_account = account
+            return {"requires_code": True}
+
+        self._bambu_login_account = ""
+        uid, devices = _bambu_cloud_account_data(token)
+        self._bambu_login_pending = {"uid": uid, "token": token, "devices": devices}
+        if len(devices) == 1:
+            return self.select_bambu_printer(devices[0]["serial"])
+        return {
+            "choose_printer": True,
+            "devices": devices,
+            "manual_serial": not devices,
+        }
+
+    def select_bambu_printer(self, serial):
+        if self._pet != "bambu" or not self._bambu_login_pending:
+            return {"error": "Sign in to your Bambu account first."}
+        serial = str(serial or "").strip()
+        pending = self._bambu_login_pending
+        allowed = {device["serial"] for device in pending["devices"]}
+        if not serial or (allowed and serial not in allowed):
+            return {"error": "Choose a printer from the list or enter its serial number."}
+        update_config(
+            "bambu",
+            mode="cloud",
+            uid=pending["uid"],
+            token=pending["token"],
+            serial=serial,
+            host=BAMBU_CLOUD_HOST,
+        )
+        self._bambu_login_pending = None
+        return {"connection": self.get_bambu_connection()}
 
     def set_bambu_connection(self, mode, uid, token, serial, ip, code):
         """
@@ -2593,12 +3146,27 @@ class SettingsApi:
         update_config("bambu", **{k: str(v or "").strip() for k, v in fields.items()})
         return self.get_bambu_connection()
 
-    def import_bambu_widget(self):
-        """Bambu pet only: the import button. Replaces the form's values with bambu-widget's."""
+    def set_bambu_camera_connection(self, camera_ip, camera_code):
         if self._pet != "bambu":
             return None
-        import_bambu_widget_config(force=True)
-        return self.get_bambu_connection()
+        ip = str(camera_ip or "").strip()
+        code = str(camera_code or "").strip()
+        if ip and not _bambu_camera_ip(ip):
+            return {"configured": False, "error": "Enter a valid private IPv4 address for the printer."}
+        try:
+            code.encode("ascii")
+        except UnicodeEncodeError:
+            return {"configured": False, "error": "The camera access code must use ASCII characters."}
+        if len(code) > 32:
+            return {"configured": False, "error": "The camera access code is too long."}
+        update_config("bambu", camera_ip=ip, camera_code=code)
+        camera = _bambu_camera_configuration(load_config("bambu"))
+        return {
+            "configured": bool(ip and code),
+            "camera_configured": camera["configured"],
+            "camera_mode": camera["mode"],
+            "camera_error": camera["error"],
+        }
 
     def close_settings(self):
         try:
@@ -2703,6 +3271,7 @@ def main():
     gap = 20
     widths = [pet_window_size(pet)[0] for pet in pets]
     start_x = screen_w - sum(widths) - max(0, len(pets) - 1) * gap - 60
+    settings_api = None
 
     for i, pet in enumerate(pets):
         win_w, win_h = pet_window_size(pet)
@@ -2727,6 +3296,8 @@ def main():
         win_y = cfg.get("y", resting_y) if desktop else resting_y
 
         api = Api(screen_h, open_target, pet)
+        if pet == ("claude" if len(pets) > 1 else pets[0]):
+            settings_api = api
 
         window = webview.create_window(
             title=window_title,
@@ -2754,6 +3325,9 @@ def main():
             _on_pet_window_loaded(window, pet)
 
         window.events.loaded += _on_loaded
+
+    if settings_api is not None:
+        _start_settings_hotkey(settings_api)
 
     webview.start()
 

@@ -738,7 +738,163 @@ def _test_bambu_status():
     assert pet_app.Api(1080, lambda: None, "claude").get_bambu_status() is None, \
         "get_bambu_status() must stay gated to the bambu pet"
 
+
+def _test_bambu_camera_protocol():
+    import struct
+
+    packet = pet_app._bambu_camera_auth_packet("12345678")
+    assert len(packet) == 80
+    assert packet[:16] == struct.pack("<IIII", 0x40, 0x3000, 0, 0)
+    assert packet[16:48] == b"bblp".ljust(32, b"\0")
+    assert packet[48:] == b"12345678".ljust(32, b"\0")
+
+    class FragmentedSocket:
+        def __init__(self, data):
+            self.data = data
+
+        def recv(self, size):
+            chunk, self.data = self.data[:min(size, 3)], self.data[min(size, 3):]
+            return chunk
+
+    jpeg = b"\xff\xd8mock-jpeg\xff\xd9"
+    response = struct.pack("<IIII", len(jpeg), 0, 1, 0) + jpeg
+    assert pet_app._bambu_camera_read_frame(FragmentedSocket(response)) == jpeg
+    assert pet_app._bambu_camera_ip("192.168.1.25") == "192.168.1.25"
+    assert pet_app._bambu_camera_ip("printer.example") is None
+    assert pet_app._bambu_camera_ip("127.0.0.1") is None
+    assert pet_app._bambu_camera_ip("8.8.8.8") is None
+    pet_app.ssl.create_default_context(cafile=pet_app.BAMBU_CAMERA_CA)
+    assert pet_app.Api(1080, lambda: None, "claude").get_bambu_camera_snapshot() is None
+    assert pet_app.SettingsApi(None, 1080, "claude").set_bambu_camera_connection(
+        "192.168.1.25", "12345678"
+    ) is None
+    old_config_path = pet_app.CONFIG_PATH
+    with tempfile.TemporaryDirectory(prefix="desktop_pet_camera_config_") as tmp:
+        pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+        api = pet_app.SettingsApi(None, 1080, "bambu")
+        saved = api.set_bambu_camera_connection("192.168.1.25", "12345678")
+        assert saved["configured"] is True
+        assert saved["camera_configured"] is False
+        camera_cfg = pet_app.load_config("bambu")
+        assert camera_cfg["camera_ip"] == "192.168.1.25"
+        assert camera_cfg["camera_code"] == "12345678"
+        assert api.set_bambu_camera_connection("8.8.8.8", "invalid")["error"]
+        assert pet_app.load_config("bambu") == camera_cfg, "invalid camera settings must not be saved"
+    pet_app.CONFIG_PATH = old_config_path
+    print("OK: Bambu camera protocol self-check passed")
+
     print("OK: bambu status self-check passed")
+
+
+def _test_bambu_cloud_camera():
+    old_cloud_request = pet_app._bambu_cloud_request
+    old_source_path = pet_app._bambu_camera_source_path
+    old_config_path = pet_app.CONFIG_PATH
+    try:
+        requests = []
+
+        def fake_cloud_request(path, body=None, token=None):
+            requests.append((path, body, token))
+            return {
+                "ttcode": "camera-id",
+                "authkey": "auth/key",
+                "passwd": "pass word",
+                "region": "cn",
+            }
+
+        pet_app._bambu_cloud_request = fake_cloud_request
+        url = pet_app._bambu_cloud_camera_session({
+            "token": "account-token",
+            "serial": "printer-serial",
+        })
+        assert requests == [(
+            pet_app.BAMBU_CLOUD_CAMERA_PATH,
+            {"dev_id": "printer-serial"},
+            "account-token",
+        )]
+        assert url.startswith("bambu:///tutk?")
+        assert "uid=camera-id" in url
+        assert "authkey=auth%2Fkey" in url
+        assert "passwd=pass%20word" in url
+        assert "region=cn" in url and "device=printer-serial" in url
+
+        cloud_cfg = {"mode": "cloud", "uid": "u", "token": "t", "serial": "s"}
+        pet_app._bambu_camera_source_path = lambda: "BambuSource.dll"
+        assert pet_app._bambu_camera_configuration(cloud_cfg) == {
+            "configured": True, "mode": "cloud", "error": ""
+        }
+        pet_app._bambu_camera_source_path = lambda: ""
+        assert pet_app._bambu_camera_configuration(cloud_cfg)["error"]
+        lan_cfg = dict(cloud_cfg, camera_ip="192.168.1.10", camera_code="1234")
+        assert pet_app._bambu_camera_configuration(lan_cfg) == {
+            "configured": True, "mode": "local", "error": ""
+        }
+        with tempfile.TemporaryDirectory(prefix="desktop_pet_cloud_camera_") as tmp:
+            pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+            api = pet_app.Api(1080, lambda: None, "bambu")
+            assert api.get_bambu_camera_config()["configured"] is False
+            assert api.set_bambu_camera_stream(False)["configured"] is False
+            assert pet_app.Api(1080, lambda: None, "claude").get_bambu_camera_config() is None
+            assert pet_app.Api(1080, lambda: None, "claude").set_bambu_camera_stream(True) is None
+        pet_app.CONFIG_PATH = old_config_path
+    finally:
+        pet_app._bambu_cloud_request = old_cloud_request
+        pet_app._bambu_camera_source_path = old_source_path
+        pet_app.CONFIG_PATH = old_config_path
+    print("OK: Bambu Cloud camera self-check passed")
+
+
+def _test_bambu_cloud_login():
+    old_config_path = pet_app.CONFIG_PATH
+    old_cloud_request = pet_app._bambu_cloud_request
+    old_account_data = pet_app._bambu_cloud_account_data
+    try:
+        with tempfile.TemporaryDirectory(prefix="desktop_pet_cloud_login_") as tmp:
+            pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
+            requests = []
+
+            def fake_cloud_request(path, body=None, token=None):
+                requests.append((path, body, token))
+                if body and body.get("password"):
+                    return {}
+                if body and body.get("code"):
+                    return {"accessToken": "temporary-token"}
+                raise AssertionError(f"Unexpected cloud request: {path}")
+
+            pet_app._bambu_cloud_request = fake_cloud_request
+            pet_app._bambu_cloud_account_data = lambda token: (
+                "account-uid", [{"serial": "printer-serial", "name": "P1S"}]
+            )
+            api = pet_app.SettingsApi(None, 1080, "bambu")
+            api.get_bambu_connection = lambda: {"serial": pet_app.load_config("bambu")["serial"]}
+            assert api.login_bambu_cloud("user@example.com", "never-save-this") == {
+                "requires_code": True
+            }
+            assert api.login_bambu_cloud("user@example.com", code="123456")["connection"]["serial"] == "printer-serial"
+            cfg = pet_app.load_config("bambu")
+            assert cfg["uid"] == "account-uid" and cfg["token"] == "temporary-token"
+            assert cfg["serial"] == "printer-serial" and "never-save-this" not in json.dumps(cfg)
+            assert requests[0][1] == {
+                "account": "user@example.com",
+                "password": "never-save-this",
+            }
+
+            api = pet_app.SettingsApi(None, 1080, "bambu")
+            api.get_bambu_connection = lambda: {"serial": pet_app.load_config("bambu")["serial"]}
+            pet_app._bambu_cloud_request = lambda *args, **kwargs: {"accessToken": "pending-token"}
+            pet_app._bambu_cloud_account_data = lambda token: (
+                "account-uid",
+                [{"serial": "serial-a", "name": "P1S"}, {"serial": "serial-b", "name": "P1P"}],
+            )
+            selection = api.login_bambu_cloud("user@example.com", "password")
+            assert selection["choose_printer"] and len(selection["devices"]) == 2
+            assert api.select_bambu_printer("not-a-printer")["error"]
+            assert api.select_bambu_printer("serial-b")["connection"]["serial"] == "serial-b"
+    finally:
+        pet_app.CONFIG_PATH = old_config_path
+        pet_app._bambu_cloud_request = old_cloud_request
+        pet_app._bambu_cloud_account_data = old_account_data
+    print("OK: Bambu cloud login self-check passed")
 
 
 def _test_config_atomic_persistence():
@@ -955,8 +1111,9 @@ def _test_bambu_import_and_reconnect():
         pet_app._bambu_key, pet_app._bambu_client = None, None
         pet_app.update_config("bambu", mode=None, uid=None, token=None, serial=None)
         write_widget({"mode": "cloud", "serial": "S1", "token": "T1", "uid": "123"})
-        s = pet_app.read_bambu_status()
-        assert s["configured"] is True, s
+        connection = pet_app.SettingsApi(None, 1080, "bambu").get_bambu_connection()
+        assert connection["configured"] is True, connection
+        assert connection["imported_from_widget"] is True, "existing widget settings auto-import in settings"
         assert started == [pet_app._bambu_gen], "one client for this connection"
 
         # The same settings on the next poll: nothing restarts.
@@ -984,7 +1141,7 @@ def _test_bambu_import_and_reconnect():
         api = pet_app.SettingsApi(None, 1080, "claude")
         assert api.get_bambu_connection() is None
         assert api.set_bambu_connection("cloud", "1", "2", "3", "", "") is None
-        assert api.import_bambu_widget() is None
+        assert api.login_bambu_cloud("user@example.com", "password")["error"]
     finally:
         pet_app.start_bambu_mqtt = real_start
         pet_app._bambu_key, pet_app._bambu_client = None, None
@@ -1007,6 +1164,9 @@ def main():
     _test_read_discord_voice_state()
     _test_sample_health_once()
     _test_bambu_status()
+    _test_bambu_camera_protocol()
+    _test_bambu_cloud_camera()
+    _test_bambu_cloud_login()
     _test_config_atomic_persistence()
     _test_bambu_settings()
     _test_bambu_print_only_visibility()
