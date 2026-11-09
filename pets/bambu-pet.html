@@ -81,6 +81,16 @@
     text-anchor: middle;
     fill: #70efb6;
   }
+  .controlButton { cursor: pointer; }
+  .controlButton rect { fill: #202733; stroke: #738096; stroke-width: 1; }
+  .controlButton text { fill: #e7ebf2; font: 700 6px "Segoe UI", sans-serif; text-anchor: middle; pointer-events: none; }
+  .controlButton:hover rect { fill: #354154; }
+  #sleepZzz { display: none; fill: #8dd5ff; font: 700 11px "Segoe UI", sans-serif; }
+  #bambuPetSvg.sleeping #sleepZzz { display: inline; }
+  #bambuPetSvg.sleeping .eye-idle { display: none; }
+  #bambuPetSvg.sleeping .eye-sleep { display: inline; }
+  #bambuPetSvg.sleeping .eye-open { display: none; }
+  .eye-sleep { display: none; }
 
   .timeBadge { display: none; }
   .timeBadge.visible { display: inline; }
@@ -369,6 +379,11 @@
           <circle id="cameraToggleLight" cx="118" cy="50" r="2.5" fill="#70efb6"/>
           <text id="cameraToggleText" x="152" y="53" text-anchor="middle" fill="#e7ebf2" font-family="Segoe UI, sans-serif" font-size="7" font-weight="700" letter-spacing="0.35">OPEN CAMERA</text>
         </g>
+        <g id="printerControls">
+        <g id="lightButton" class="controlButton" role="button" tabindex="0" aria-label="Toggle chamber light">
+          <rect x="198" y="39" width="62" height="20" rx="8"/><text id="lightButtonText" x="229" y="52">LIGHT: OFF</text>
+        </g>
+        </g>
         <g id="printer-hit">
           <!-- feet -->
           <rect x="110" y="210" width="24" height="39" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
@@ -455,7 +470,9 @@
               <path d="M110 138 L130 138"/>
               <path d="M170 138 L190 138"/>
             </g>
+            <g class="eye-sleep" fill="none" stroke="#8dd5ff" stroke-width="4" stroke-linecap="round"><path d="M110 138 Q120 146 130 138"/><path d="M170 138 Q180 146 190 138"/></g>
           </g>
+          <text id="sleepZzz" x="196" y="130">Zzz</text>
           <g id="mouth" aria-hidden="true">
             <path id="mouthSmile" d="M141 177 Q150 184 159 177"/>
             <path id="mouthGrin" d="M140 177 Q150 185 160 177"/>
@@ -467,6 +484,12 @@
           </g>
 
           <text id="screenPercent" x="150" y="169">--%</text>
+        </g>
+        <g id="pauseButton" class="controlButton" role="button" tabindex="0" aria-label="Pause or resume print">
+          <rect x="80" y="228" width="62" height="19" rx="7"/><text id="pauseButtonText" x="111" y="240">PAUSE</text>
+        </g>
+        <g id="stopButton" class="controlButton" role="button" tabindex="0" aria-label="Stop print">
+          <rect x="158" y="228" width="62" height="19" rx="7"/><text x="189" y="240">STOP</text>
         </g>
         <g id="layerBadge" aria-label="Layer progress">
           <rect x="68" y="111" width="12" height="94" rx="6" fill="#11151d" stroke="#705632" stroke-width="1"/>
@@ -544,6 +567,8 @@
   let milestoneBlinkTimer = null;
   let cameraLastUpdated = null;
   let cameraPollInFlight = false;
+  let currentMood = 'idle';
+  let chamberLightOn = false;
 
   function applyPetScale(pct) {
     petWrap.style.setProperty('--pet-scale', (parseInt(pct, 10) / 100 || 1).toString());
@@ -592,6 +617,9 @@
       }
     }
     statusBadge.dataset.mood = mood;
+    currentMood = mood;
+    svg.classList.toggle('sleeping', !!(s && s.sleeping));
+    pauseButtonText.textContent = mood === 'pause' ? 'RESUME' : 'PAUSE';
     svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
     statusText.textContent = displayValue(label);
     let expression = 'neutral';
@@ -707,6 +735,31 @@
     wifiIndicator.classList.toggle('visible', hasWifiLevel);
     if (hasWifiLevel) wifiIndicator.dataset.level = String(Math.round(wifiLevel));
   }
+
+  const pauseButton = document.getElementById('pauseButton');
+  const pauseButtonText = document.getElementById('pauseButtonText');
+  const stopButton = document.getElementById('stopButton');
+  const lightButton = document.getElementById('lightButton');
+  const lightButtonText = document.getElementById('lightButtonText');
+  function bindControl(el, fn) {
+    el.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); fn(); } });
+  }
+  pauseButtonText.textContent = 'PAUSE';
+  function requestPrintControl(command, message) {
+    if (!['run', 'pause'].includes(currentMood) || !window.confirm(message)) return;
+    window.pywebview?.api?.control_bambu?.(command);
+  }
+  bindControl(pauseButton, () => {
+    if (currentMood === 'run') requestPrintControl('pause', 'Pause the current print?');
+    else if (currentMood === 'pause') requestPrintControl('resume', 'Resume the current print?');
+  });
+  bindControl(stopButton, () => requestPrintControl('stop', 'Stop and cancel the current print? This cannot be undone.'));
+  bindControl(lightButton, async () => {
+    const next = !chamberLightOn;
+    const result = await window.pywebview?.api?.control_bambu?.('chamber_light', next ? 'on' : 'off');
+    if (!result || result.ok) { chamberLightOn = next; lightButtonText.textContent = `LIGHT: ${chamberLightOn ? 'ON' : 'OFF'}`; }
+  });
 
   async function pollCamera() {
     if (!cameraMonitorOpen || cameraPollInFlight || !window.pywebview?.api?.get_bambu_camera_snapshot) return;
@@ -874,7 +927,10 @@
       if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
         window.pywebview.api.drop();
       }
-    } else if (!(e.target instanceof Node) || !cameraToggle.contains(e.target)) {
+    } else if (!(e.target instanceof Node) || (!cameraToggle.contains(e.target)
+      && !document.getElementById('lightButton').contains(e.target)
+      && !document.getElementById('pauseButton').contains(e.target)
+      && !document.getElementById('stopButton').contains(e.target))) {
       handlePetClick();
     }
     dragStartX = undefined;

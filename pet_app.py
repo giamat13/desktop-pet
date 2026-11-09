@@ -2129,6 +2129,30 @@ def start_bambu_mqtt(cfg, gen):
     return client
 
 
+def send_bambu_command(command, value=None):
+    """Publish a documented printer control command on the active MQTT client."""
+    with _bambu_lock:
+        client = _bambu_client
+        cfg = load_config("bambu")
+        if not client or not _bambu_ready(cfg):
+            return {"ok": False, "error": "Printer is not connected"}
+        topic = f"device/{cfg['serial']}/request"
+        sequence = str(int(time.time() * 1000) % 1000000)
+        if command in ("pause", "resume", "stop"):
+            payload = {"print": {"sequence_id": sequence, "command": command, "param": ""}}
+        elif command == "chamber_light" and value in ("on", "off"):
+            payload = {"system": {
+                "sequence_id": sequence, "command": "ledctrl",
+                "led_node": "chamber_light", "led_mode": value,
+                "led_on_time": 500, "led_off_time": 500,
+                "loop_times": 1, "interval_time": 1000,
+            }}
+        else:
+            return {"ok": False, "error": "Unsupported printer command"}
+        info = client.publish(topic, json.dumps(payload), qos=1)
+    return {"ok": getattr(info, "rc", 0) == 0}
+
+
 def _stop_bambu_client(client):
     try:
         client.loop_stop()
@@ -2624,6 +2648,7 @@ class Api:
         self.dragging = False
         self.screen_h = screen_h
         self._bambu_auto_hidden = None
+        self._bambu_idle_since = None
 
     # Both pets call their own "open" name; expose both, same action.
     def open_claude(self):
@@ -2702,8 +2727,17 @@ class Api:
             return None
         status = read_bambu_status()
         cfg = load_config("bambu")
+        now = time.monotonic()
+        if (status.get("connected") and status.get("has_data")
+                and status.get("mood") in ("idle", "done")):
+            if self._bambu_idle_since is None:
+                self._bambu_idle_since = now
+            status["sleeping"] = now - self._bambu_idle_since >= 600
+        else:
+            self._bambu_idle_since = None
+            status["sleeping"] = False
         if cfg.get("bambu_visibility", "always") == "printing":
-            should_hide = status["mood"] not in ("run", "pause")
+            should_hide = status["sleeping"]
             if should_hide != self._bambu_auto_hidden:
                 try:
                     if self._window:
@@ -2716,6 +2750,11 @@ class Api:
                 except Exception as exc:
                     log("Bambu print-only visibility failed:", exc)
         return status
+
+    def control_bambu(self, command, value=None):
+        if self._pet != "bambu":
+            return {"ok": False, "error": "Unavailable"}
+        return send_bambu_command(command, value)
 
     def get_bambu_camera_snapshot(self, since_updated_at=None):
         if self._pet != "bambu":
