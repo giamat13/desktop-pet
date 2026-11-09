@@ -2216,6 +2216,52 @@ def read_bambu_status():
     return bambu_summary(configured, data, connected, error)
 
 
+# Bambu "printing" mode: the window shows while a print runs and is hidden
+# otherwise. This runs on its own timer, not from the page's JS poll: a window
+# created hidden may never run its page, so nothing on the JS side would ever
+# ask for the printer status (and the MQTT connection would never start).
+BAMBU_PRINT_MOODS = ("run", "pause")
+BAMBU_PRINT_POLL_SECS = 1.5
+
+
+def _bambu_print_visibility_step(window, shown):
+    """
+    One tick of the print-only watch. `shown` is what the last tick applied
+    (None = unknown: just started, or the mode was changed), so the window is
+    only touched when the answer changes. Returns the new `shown` value.
+    """
+    cfg = load_config("bambu")
+    if cfg.get("bambu_visibility", "always") != "printing" or cfg.get("hidden", False):
+        return None  # other modes are handled by set_bambu_visibility()
+    status = read_bambu_status()  # also keeps the printer connection running
+    want = status.get("mood") in BAMBU_PRINT_MOODS
+    if want != shown:
+        if want:
+            _show_pet_window(window, "bambu")
+        else:
+            _stop_bambu_camera()
+            window.hide()
+    return want
+
+
+def _bambu_print_visibility_loop(window):
+    shown = None
+    while True:
+        try:
+            shown = _bambu_print_visibility_step(window, shown)
+        except Exception as exc:
+            shown = None
+            log("Bambu print-only visibility failed:", exc)
+        time.sleep(BAMBU_PRINT_POLL_SECS)
+
+
+def _start_bambu_print_watch():
+    """Passed to webview.start(), so it runs once the GUI loop is up."""
+    window = _pet_windows.get("bambu")
+    if window is not None:
+        threading.Thread(target=_bambu_print_visibility_loop, args=(window,), daemon=True).start()
+
+
 def bambu_cloud_login():
     """Console only (`python pet_app.py bambu-login`). Ported from bambu-widget's cloud_login()."""
     import getpass
@@ -2647,7 +2693,6 @@ class Api:
         self._settings_window = None
         self.dragging = False
         self.screen_h = screen_h
-        self._bambu_auto_hidden = None
         self._bambu_idle_since = None
 
     # Both pets call their own "open" name; expose both, same action.
@@ -2726,7 +2771,6 @@ class Api:
             _stop_bambu_camera()
             return None
         status = read_bambu_status()
-        cfg = load_config("bambu")
         now = time.monotonic()
         if (status.get("connected") and status.get("has_data")
                 and status.get("mood") in ("idle", "done")):
@@ -2736,19 +2780,8 @@ class Api:
         else:
             self._bambu_idle_since = None
             status["sleeping"] = False
-        if cfg.get("bambu_visibility", "always") == "printing":
-            should_hide = status["sleeping"]
-            if should_hide != self._bambu_auto_hidden:
-                try:
-                    if self._window:
-                        if should_hide:
-                            _stop_bambu_camera()
-                            self._window.hide()
-                        else:
-                            _show_pet_window(self._window, "bambu")
-                    self._bambu_auto_hidden = should_hide
-                except Exception as exc:
-                    log("Bambu print-only visibility failed:", exc)
+        # Window show/hide for "printing" mode is not decided here: see
+        # _bambu_print_visibility_loop, which runs without the page.
         return status
 
     def control_bambu(self, command, value=None):
@@ -3383,7 +3416,7 @@ def main():
     if settings_api is not None:
         _start_settings_hotkey(settings_api)
 
-    webview.start()
+    webview.start(_start_bambu_print_watch)
 
 
 if __name__ == "__main__":

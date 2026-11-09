@@ -1013,19 +1013,30 @@ def _test_bambu_print_only_visibility():
     pet_app.CONFIG_PATH = os.path.join(tmp, "config.json")
     pet_app.update_config("bambu", hidden=False, bambu_visibility="printing")
     window = FakeWindow()
-    api = pet_app.Api(1080, lambda: None, "bambu")
-    api._window = window
+    # One mood per tick: idle, print starts, paused, print finishes.
     states = [
-        {"mood": "run", "configured": True},
         {"mood": "idle", "configured": True},
+        {"mood": "run", "configured": True},
+        {"mood": "pause", "configured": True},
+        {"mood": "done", "configured": True},
     ]
     pet_app.read_bambu_status = lambda: states.pop(0)
     try:
-        assert api.get_bambu_status()["mood"] == "run"
-        assert window.actions == ["show"], window.actions
-        assert api.get_bambu_status()["mood"] == "idle"
-        assert window.actions == ["show", "hide"], window.actions
+        shown = None
+        shown = pet_app._bambu_print_visibility_step(window, shown)
+        assert window.actions == ["hide"], window.actions
+        shown = pet_app._bambu_print_visibility_step(window, shown)
+        assert window.actions == ["hide", "show"], window.actions
+        shown = pet_app._bambu_print_visibility_step(window, shown)
+        assert window.actions == ["hide", "show"], window.actions  # paused: still shown
+        shown = pet_app._bambu_print_visibility_step(window, shown)
+        assert window.actions == ["hide", "show", "hide"], window.actions
         assert pet_app.get_pet_config("bambu")["hidden"] is False
+        # Leaving printing mode: nothing is read or touched; the other mode's code owns the window.
+        pet_app.update_config("bambu", bambu_visibility="always")
+        assert pet_app._bambu_print_visibility_step(window, shown) is None
+        assert window.actions == ["hide", "show", "hide"], window.actions
+        assert states == [], states
     finally:
         pet_app.read_bambu_status = real_read_status
         pet_app.CONFIG_PATH = old_config_path
