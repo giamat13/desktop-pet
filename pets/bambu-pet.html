@@ -85,6 +85,12 @@
   .controlButton rect { fill: #202733; stroke: #738096; stroke-width: 1; }
   .controlButton text { fill: #e7ebf2; font: 700 6px "Segoe UI", sans-serif; text-anchor: middle; pointer-events: none; }
   .controlButton:hover rect { fill: #354154; }
+  .lightToggle { cursor: pointer; }
+  .lightToggle rect { fill: #121720; stroke: #828b9c; stroke-width: 1.2; }
+  .lightToggle:hover rect { fill: #252c3a; }
+  .lightToggle .bulb { fill: none; stroke: #c9cfdd; stroke-width: 1.3; stroke-linejoin: round; stroke-linecap: round; }
+  .lightToggle.on rect { stroke: #ffc45c; }
+  .lightToggle.on .bulb { fill: #ffc45c; stroke: #ffc45c; }
   #sleepZzz { display: none; fill: #8dd5ff; font: 700 11px "Segoe UI", sans-serif; }
   #bambuPetSvg.sleeping #sleepZzz { display: inline; }
   #bambuPetSvg.sleeping .eye-idle { display: none; }
@@ -370,6 +376,13 @@
             <text id="cameraPlaceholderText" x="150" y="-89" text-anchor="middle" fill="#9ba3b4" font-family="Segoe UI, sans-serif" font-size="7" font-weight="700" letter-spacing="0.8">CAMERA NOT CONFIGURED</text>
           </g>
           <circle cx="150" cy="-157" r="1.5" fill="#70efb6"/>
+          <g id="lightButton" class="lightToggle" role="button" tabindex="0" aria-label="Toggle chamber light" aria-pressed="false">
+            <title id="lightButtonTitle">Chamber light: off</title>
+            <rect x="200" y="-150" width="26" height="20" rx="6"/>
+            <circle class="bulb" cx="213" cy="-142" r="4.2"/>
+            <path class="bulb" d="M210.8 -137.4 H215.2 V-134.4 H210.8 Z"/>
+            <path class="bulb" d="M211.6 -132.6 H214.4"/>
+          </g>
           <rect x="139" y="-48" width="22" height="78" rx="4" fill="url(#railGrad)" stroke="#343a48" stroke-width="1"/>
           <rect x="125" y="27" width="50" height="8" rx="4" fill="url(#lidGrad)" stroke="#343a48" stroke-width="1"/>
         </g>
@@ -378,11 +391,6 @@
           <rect x="108" y="40" width="84" height="20" rx="10" fill="#121720" stroke="#828b9c" stroke-width="1.5"/>
           <circle id="cameraToggleLight" cx="118" cy="50" r="2.5" fill="#70efb6"/>
           <text id="cameraToggleText" x="152" y="53" text-anchor="middle" fill="#e7ebf2" font-family="Segoe UI, sans-serif" font-size="7" font-weight="700" letter-spacing="0.35">OPEN CAMERA</text>
-        </g>
-        <g id="printerControls">
-        <g id="lightButton" class="controlButton" role="button" tabindex="0" aria-label="Toggle chamber light">
-          <rect x="198" y="39" width="62" height="20" rx="8"/><text id="lightButtonText" x="229" y="52">LIGHT: OFF</text>
-        </g>
         </g>
         <g id="printer-hit">
           <!-- feet -->
@@ -740,7 +748,12 @@
   const pauseButtonText = document.getElementById('pauseButtonText');
   const stopButton = document.getElementById('stopButton');
   const lightButton = document.getElementById('lightButton');
-  const lightButtonText = document.getElementById('lightButtonText');
+  const lightButtonTitle = document.getElementById('lightButtonTitle');
+  function renderLightButton() {
+    lightButton.classList.toggle('on', chamberLightOn);
+    lightButton.setAttribute('aria-pressed', String(chamberLightOn));
+    lightButtonTitle.textContent = `Chamber light: ${chamberLightOn ? 'on' : 'off'}`;
+  }
   function bindControl(el, fn) {
     el.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); fn(); } });
@@ -758,8 +771,9 @@
   bindControl(lightButton, async () => {
     const next = !chamberLightOn;
     const result = await window.pywebview?.api?.control_bambu?.('chamber_light', next ? 'on' : 'off');
-    if (!result || result.ok) { chamberLightOn = next; lightButtonText.textContent = `LIGHT: ${chamberLightOn ? 'ON' : 'OFF'}`; }
+    if (!result || result.ok) { chamberLightOn = next; renderLightButton(); }
   });
+  renderLightButton();
 
   async function pollCamera() {
     if (!cameraMonitorOpen || cameraPollInFlight || !window.pywebview?.api?.get_bambu_camera_snapshot) return;
