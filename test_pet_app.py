@@ -705,7 +705,7 @@ def _test_bambu_status():
         "configured", "connected", "error", "has_data", "mood", "percent",
         "elapsed_minutes", "remaining_minutes", "layer_num",
         "nozzle_temp", "nozzle_target", "bed_temp", "bed_target", "warming", "total_layers", "wifi_level",
-        "spd_lvl", "spd_mag",
+        "spd_lvl", "spd_mag", "filaments",
     }, s
 
     for signal, expected in (("-55dBm", 3), ("-68dBm", 2), ("-82dBm", 1), ("unavailable", None)):
@@ -787,6 +787,61 @@ def _test_bambu_status():
         with pet_app._bambu_lock:
             pet_app._bambu_client = old_client
             pet_app.CONFIG_PATH = old_cfg_path
+
+
+def _test_bambu_filaments():
+    """
+    The filament panel's data: AMS slots and the external spool, with colour,
+    name and remaining amount. Remaining is only trusted for RFID-tagged
+    spools; a third-party spool (all-zero tag id) must read as unknown, not 0.
+    """
+    ams_report = {
+        "ams": {"ams": [{"tray": [
+            {"id": "0", "tray_type": "PLA", "tray_sub_brands": "PLA Basic",
+             "tray_color": "FF0000FF", "remain": 62, "tray_weight": "1000",
+             "tray_uuid": "A" * 32},
+            {"id": "1", "tray_type": "", "tray_color": "00000000",
+             "remain": -1, "tray_uuid": "0" * 32},
+            {"id": "2", "tray_type": "PETG", "tray_color": "zz",
+             "remain": 80, "tray_weight": "1000", "tray_uuid": "0" * 32},
+            {"id": "3", "tray_type": "ABS", "tray_color": "00AE42FF",
+             "remain": 25, "tray_weight": "800"},
+        ]}]},
+        "vt_tray": {"id": "254", "tray_type": "TPU", "tray_color": "FFFFFFFF",
+                    "remain": -1, "tray_uuid": "0" * 32},
+    }
+    spools = pet_app.bambu_filaments(ams_report)
+    assert [s["slot"] for s in spools] == ["A1", "A2", "A3", "A4", "EXT"], spools
+
+    a1, a2, a3, a4, ext = spools
+    assert a1 == {"slot": "A1", "empty": False, "name": "PLA Basic", "color": "#FF0000",
+                  "remain_pct": 62, "grams": 620}, a1
+    assert a2["empty"] is True and a2["name"] == "", a2
+    assert a3["color"] is None, "a colour that is not hex must be dropped, not shown"
+    assert a3["remain_pct"] is None and a3["grams"] is None, \
+        "all-zero RFID tag means the remaining amount is unknown, not 0"
+    assert a3["name"] == "PETG", a3
+    assert a4["color"] == "#00AE42" and a4["remain_pct"] == 25 and a4["grams"] == 200, a4
+    assert ext["name"] == "TPU" and ext["color"] == "#FFFFFF", ext
+    assert ext["remain_pct"] is None, "external spool with no tag reads as unknown"
+
+    # No `tray_uuid` key at all: the printer did not say it is untagged, so
+    # the reported remaining amount is used as-is.
+    untagged_key_missing = pet_app.bambu_filaments({"ams": {"ams": [{"tray": [
+        {"id": "0", "tray_type": "PLA", "tray_color": "112233FF", "remain": 40}]}]}})
+    assert untagged_key_missing[0]["remain_pct"] == 40, untagged_key_missing
+    assert untagged_key_missing[0]["grams"] is None, "no weight reported: no grams estimate"
+
+    # Malformed shapes must never raise; the pet just shows fewer rows.
+    assert pet_app.bambu_filaments({}) == []
+    assert pet_app.bambu_filaments({"ams": "nope"}) == []
+    assert pet_app.bambu_filaments({"ams": {"ams": [None, {"tray": None}, {"tray": [None, 3]}]}}) == []
+
+    # Wired through the summary the pet actually polls.
+    s = pet_app.bambu_summary(True, ams_report, True, "")
+    assert [x["slot"] for x in s["filaments"]] == ["A1", "A2", "A3", "A4", "EXT"], s
+    assert pet_app.bambu_summary(True, {}, False, "")["filaments"] == []
+    print("OK: bambu_filaments self-check passed")
 
 
 def _test_bambu_camera_protocol():
@@ -1247,6 +1302,7 @@ def main():
     _test_read_discord_voice_state()
     _test_sample_health_once()
     _test_bambu_status()
+    _test_bambu_filaments()
     _test_bambu_camera_protocol()
     _test_bambu_cloud_camera()
     _test_bambu_cloud_login()

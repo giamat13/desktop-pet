@@ -32,15 +32,13 @@
 
   svg#bambuPetSvg {
     width: 300px;
-    height: 420px;
+    height: 500px;
     overflow: visible;
     cursor: pointer;
   }
 
-  /* Soft drop shadow so the printer reads against any wallpaper. */
   #printer-hit { filter: drop-shadow(0 4px 5px rgba(0, 0, 0, 0.35)); }
 
-  /* ================= shadow + idle motion ================= */
   #shadow {
     transform-origin: 150px 236px;
     animation: shadowIdle 3.4s ease-in-out infinite;
@@ -48,13 +46,13 @@
   #shadow.jump { animation: shadowHop 0.62s cubic-bezier(.36,0,.15,1) 1; }
 
   @keyframes shadowIdle {
-    0%, 100% { transform: scaleX(1);    opacity: 0.32; }
-    50%      { transform: scaleX(0.94); opacity: 0.26; }
+    0%, 100% { transform: scaleX(1); opacity: 0.32; }
+    50% { transform: scaleX(0.94); opacity: 0.26; }
   }
   @keyframes shadowHop {
-    0%   { transform: scaleX(1);    opacity: 0.35; }
-    30%  { transform: scaleX(0.55); opacity: 0.14; }
-    100% { transform: scaleX(1);    opacity: 0.35; }
+    0% { transform: scaleX(1); opacity: 0.35; }
+    30% { transform: scaleX(0.55); opacity: 0.14; }
+    100% { transform: scaleX(1); opacity: 0.35; }
   }
 
   #printer-root {
@@ -64,16 +62,16 @@
   #printer-root.jump { animation: hopOnce 0.62s cubic-bezier(.36,0,.15,1) 1; }
 
   @keyframes idleSway {
-    0%, 100% { transform: translateY(0)    rotate(0deg); }
-    50%      { transform: translateY(-3px) rotate(0.8deg); }
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-3px) rotate(0.8deg); }
   }
   @keyframes hopOnce {
-    0%   { transform: translateY(0)     scale(1, 1)      rotate(0deg); }
-    14%  { transform: translateY(2px)   scale(1.07, 0.9) rotate(0deg); }
-    45%  { transform: translateY(-58px) scale(0.94, 1.08) rotate(-3deg); }
-    72%  { transform: translateY(0)     scale(1.1, 0.88) rotate(3deg); }
-    86%  { transform: translateY(-5px)  scale(0.98, 1.03) rotate(-1deg); }
-    100% { transform: translateY(0)     scale(1, 1)      rotate(0deg); }
+    0% { transform: translateY(0) scale(1, 1) rotate(0deg); }
+    14% { transform: translateY(2px) scale(1.07, 0.9) rotate(0deg); }
+    45% { transform: translateY(-58px) scale(0.94, 1.08) rotate(-3deg); }
+    72% { transform: translateY(0) scale(1.1, 0.88) rotate(3deg); }
+    86% { transform: translateY(-5px) scale(0.98, 1.03) rotate(-1deg); }
+    100% { transform: translateY(0) scale(1, 1) rotate(0deg); }
   }
 
   #screenPercent {
@@ -88,7 +86,6 @@
   .controlButton:focus-visible .btnBg { stroke: #ffc45c; }
   .controlButton .resumeIcon { display: none; }
 
-  /* Speed control styles */
   #speedControl {
     outline: none;
     user-select: none;
@@ -111,17 +108,13 @@
     transition: fill 0.2s, r 0.15s;
     pointer-events: none;
   }
-  .speedNotch.active {
-    fill: #70efb6;
-  }
+  .speedNotch.active { fill: #70efb6; }
   #speedThumb {
     cursor: pointer;
     pointer-events: none;
     transition: transform 0.14s cubic-bezier(0.2, 0.9, 0.3, 1);
   }
-  #speedThumb.dragging {
-    transition: none;
-  }
+  #speedThumb.dragging { transition: none; }
   #speedThumb .thumbGlow {
     fill: #70efb6;
     opacity: 0.28;
@@ -204,6 +197,33 @@
   #bambuPetSvg.sleeping .eye-open { display: none; }
   .eye-sleep { display: none; }
 
+  /* Filament spools sit directly on the printer roof. */
+  #spoolRow .spoolSlot {
+    font: 700 5.5px "Segoe UI", system-ui, sans-serif;
+    fill: #f3f6fc;
+    stroke: #101722;
+    stroke-width: 1.5px;
+    stroke-linejoin: round;
+    paint-order: stroke fill;
+    text-anchor: middle;
+    pointer-events: none;
+  }
+  #spoolRow .spool { cursor: default; }
+  #spoolRow .spoolFrame {
+    fill: #101722;
+    fill-opacity: 0.76;
+    stroke: #e0e7f2;
+    stroke-opacity: 0.42;
+    stroke-width: 0.9;
+  }
+  #spoolRow .spoolFrameInner {
+    fill: none;
+    stroke: #ffffff;
+    stroke-opacity: 0.08;
+    stroke-width: 0.7;
+  }
+  #spoolPage { font: 700 6.5px "Segoe UI", system-ui, sans-serif; fill: #9ba3b4; pointer-events: none; }
+
   .timeBadge { display: none; }
   .timeBadge.visible { display: inline; }
   .timeBadge rect {
@@ -228,7 +248,6 @@
   #remainingBadge rect { stroke: #7ff0bb; }
   #remainingBadge text { fill: #7ff0bb; }
 
-  /* Temperature gauges: always visible round dials, filled by temp / target. */
   .temperatureGauge { display: inline; }
   .temperatureGauge .gaugeBack {
     fill: #171b24;
@@ -284,9 +303,7 @@
     text-anchor: middle;
   }
 
-  #statusBadge {
-    pointer-events: none;
-  }
+  #statusBadge { pointer-events: none; }
   #statusBadge rect {
     fill: #242934;
     stroke: #9ba3b4;
@@ -305,9 +322,7 @@
   #statusBadge[data-mood="pause"] text, #statusBadge[data-mood="pause"] circle { fill: #ffd27a; }
   #statusBadge[data-mood="done"] rect { fill: #18415b; stroke: #8dd5ff; }
   #statusBadge[data-mood="done"] text, #statusBadge[data-mood="done"] circle { fill: #8dd5ff; }
-  #statusBadge[data-mood="fail"], #statusBadge[data-mood="offline"] {
-    color: #ff8b96;
-  }
+  #statusBadge[data-mood="fail"], #statusBadge[data-mood="offline"] { color: #ff8b96; }
   #statusBadge[data-mood="fail"] rect, #statusBadge[data-mood="offline"] rect {
     fill: #64222b;
     stroke: #ff8b96;
@@ -373,15 +388,9 @@
   #bambuPetSvg.finish-reaction #mouth {
     animation: finishReaction 900ms cubic-bezier(.2,.8,.25,1);
   }
-  #printer-root.progress-hop {
-    animation: progressHop 480ms cubic-bezier(.2,.8,.25,1);
-  }
-  #printer-root.layer-hop {
-    animation: layerHop 620ms cubic-bezier(.2,.8,.25,1);
-  }
-  #shadow.progress-hop, #shadow.layer-hop {
-    animation: progressShadow 480ms ease-out;
-  }
+  #printer-root.progress-hop { animation: progressHop 480ms cubic-bezier(.2,.8,.25,1); }
+  #printer-root.layer-hop { animation: layerHop 620ms cubic-bezier(.2,.8,.25,1); }
+  #shadow.progress-hop, #shadow.layer-hop { animation: progressShadow 480ms ease-out; }
   @keyframes stateReaction {
     0% { transform: translateY(0) scale(1); }
     38% { transform: translateY(-3px) scale(1.16); }
@@ -416,44 +425,43 @@
   }
   @keyframes blink {
     0%, 92%, 100% { transform: scaleY(1); }
-    95%           { transform: scaleY(0.05); }
-    97%           { transform: scaleY(1); }
+    95% { transform: scaleY(0.05); }
+    97% { transform: scaleY(1); }
   }
-
 </style>
 </head>
 <body>
 <div class="stage" id="stage">
   <div id="petWrap">
-    <svg id="bambuPetSvg" viewBox="0 -160 300 420" xmlns="http://www.w3.org/2000/svg">
+    <svg id="bambuPetSvg" viewBox="0 -240 300 500" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="bodyGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stop-color="#4a4f62"/>
-          <stop offset="45%"  stop-color="#2c303c"/>
+          <stop offset="0%" stop-color="#4a4f62"/>
+          <stop offset="45%" stop-color="#2c303c"/>
           <stop offset="100%" stop-color="#16181e"/>
         </linearGradient>
         <linearGradient id="lidGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stop-color="#6d7388"/>
+          <stop offset="0%" stop-color="#6d7388"/>
           <stop offset="100%" stop-color="#3a3e4d"/>
         </linearGradient>
         <linearGradient id="railGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stop-color="#c3c8d5"/>
+          <stop offset="0%" stop-color="#c3c8d5"/>
           <stop offset="100%" stop-color="#5b6070"/>
         </linearGradient>
         <linearGradient id="footGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stop-color="#2c303c"/>
+          <stop offset="0%" stop-color="#2c303c"/>
           <stop offset="100%" stop-color="#101217"/>
         </linearGradient>
         <linearGradient id="screenGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stop-color="#0b0d12"/>
+          <stop offset="0%" stop-color="#0b0d12"/>
           <stop offset="100%" stop-color="#1e222c"/>
         </linearGradient>
         <radialGradient id="eyeGrad" cx="50%" cy="40%" r="60%">
-          <stop offset="0%"   stop-color="#ffffff"/>
+          <stop offset="0%" stop-color="#ffffff"/>
           <stop offset="100%" stop-color="#c9cfdd"/>
         </radialGradient>
         <radialGradient id="shadowGrad" cx="50%" cy="50%" r="50%">
-          <stop offset="0%"   stop-color="#000000" stop-opacity="0.55"/>
+          <stop offset="0%" stop-color="#000000" stop-opacity="0.55"/>
           <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
         </radialGradient>
         <pattern id="scanlines" width="4" height="4" patternUnits="userSpaceOnUse">
@@ -461,11 +469,102 @@
         </pattern>
       </defs>
 
-      <!-- ground shadow -->
       <ellipse id="shadow" cx="150" cy="236" rx="66" ry="12" fill="url(#shadowGrad)"/>
 
       <g id="printer-root">
-        <g id="cameraMonitor" aria-label="Printer camera monitor" visibility="hidden">
+       <!-- Screen support behind the filament spools -->
+      <g id="cameraStand" aria-hidden="true" visibility="hidden">
+        <path d="M130 1 H134 V68 H130 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M166 1 H170 V68 H166 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M128 0 H172 V5 H128 Z"
+              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
+        <path d="M121 67 H179 V73 H121 Z"
+              fill="#202631" stroke="#788294" stroke-width="1"/>
+        <path d="M126 69 H174"
+              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
+      </g>
+             <!-- Screen support behind the filament spools -->
+      <g id="cameraStand" aria-hidden="true" visibility="hidden">
+        <path d="M130 1 H134 V68 H130 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M166 1 H170 V68 H166 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M128 0 H172 V5 H128 Z"
+              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
+        <path d="M121 67 H179 V73 H121 Z"
+              fill="#202631" stroke="#788294" stroke-width="1"/>
+        <path d="M126 69 H174"
+              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
+      </g>
+             <!-- Screen support behind the filament spools -->
+      <g id="cameraStand" aria-hidden="true" visibility="hidden">
+        <path d="M130 1 H134 V68 H130 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M166 1 H170 V68 H166 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M128 0 H172 V5 H128 Z"
+              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
+        <path d="M121 67 H179 V73 H121 Z"
+              fill="#202631" stroke="#788294" stroke-width="1"/>
+        <path d="M126 69 H174"
+              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
+      </g>stroke="#151a23" stroke-width="1.2"/>
+             <!-- Screen support behind the filament spools -->
+      <g id="cameraStand" aria-hidden="true" visibility="hidden">
+        <path d="M130 1 H134 V68 H130 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M166 1 H170 V68 H166 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M128 0 H172 V5 H128 Z"
+              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
+        <path d="M121 67 H179 V73 H121 Z"
+              fill="#202631" stroke="#788294" stroke-width="1"/>
+        <path d="M126 69 H174"
+              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
+      </g>stroke="#8993a4" stroke-width="0.7"/>
+             <!-- Screen support behind the filament spools -->
+      <g id="cameraStand" aria-hidden="true" visibility="hidden">
+        <path d="M130 1 H134 V68 H130 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M166 1 H170 V68 H166 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M128 0 H172 V5 H128 Z"
+              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
+        <path d="M121 67 H179 V73 H121 Z"
+              fill="#202631" stroke="#788294" stroke-width="1"/>
+        <path d="M126 69 H174"
+              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
+      </g>202631" stroke="#788294" stroke-width="1"/>
+             <!-- Screen support behind the filament spools -->
+      <g id="cameraStand" aria-hidden="true" visibility="hidden">
+        <path d="M130 1 H134 V68 H130 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M166 1 H170 V68 H166 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M128 0 H172 V5 H128 Z"
+              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
+        <path d="M121 67 H179 V73 H121 Z"
+              fill="#202631" stroke="#788294" stroke-width="1"/>
+        <path d="M126 69 H174"
+              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
+      </g>5" stroke-width="0.8"/>
+             <!-- Screen support behind the filament spools -->
+      <g id="cameraStand" aria-hidden="true" visibility="hidden">
+        <path d="M130 1 H134 V68 H130 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M166 1 H170 V68 H166 Z"
+              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
+        <path d="M128 0 H172 V5 H128 Z"
+              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
+        <path d="M121 67 H179 V73 H121 Z"
+              fill="#202631" stroke="#788294" stroke-width="1"/>
+        <path d="M126 69 H174"
+              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
+      </g>
+
+        <g id="cameraMonitor" aria-label="Printer camera monitor" visibility="hidden" transform="translate(0 50)">
           <rect x="64" y="-160" width="172" height="112" rx="10" fill="#121720" stroke="#828b9c" stroke-width="2"/>
           <rect x="70" y="-154" width="160" height="94" rx="5" fill="#070a0f" stroke="#333b49" stroke-width="1"/>
           <image id="cameraFrame" x="71" y="-153" width="158" height="92" preserveAspectRatio="xMidYMid slice" visibility="hidden"/>
@@ -482,33 +581,23 @@
             <path class="bulb" d="M210.8 -137.4 H215.2 V-134.4 H210.8 Z"/>
             <path class="bulb" d="M211.6 -132.6 H214.4"/>
           </g>
-          <rect x="139" y="-48" width="22" height="78" rx="4" fill="url(#railGrad)" stroke="#343a48" stroke-width="1"/>
-          <rect x="125" y="27" width="50" height="8" rx="4" fill="url(#lidGrad)" stroke="#343a48" stroke-width="1"/>
         </g>
-        <g id="cameraToggle" role="button" tabindex="0" aria-label="Open camera screen"
-           aria-hidden="true" visibility="hidden" style="cursor:pointer">
-          <rect x="108" y="40" width="84" height="20" rx="10" fill="#121720" stroke="#828b9c" stroke-width="1.5"/>
-          <circle id="cameraToggleLight" cx="118" cy="50" r="2.5" fill="#70efb6"/>
-          <text id="cameraToggleText" x="152" y="53" text-anchor="middle" fill="#e7ebf2" font-family="Segoe UI, sans-serif" font-size="7" font-weight="700" letter-spacing="0.35">OPEN CAMERA</text>
-        </g>
+
         <g id="printer-hit">
-          <!-- feet -->
           <rect x="110" y="210" width="24" height="39" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
           <rect x="166" y="210" width="24" height="39" rx="9" fill="url(#footGrad)" stroke="#0b0c10" stroke-width="1.5"/>
 
-          <!-- enclosure -->
           <rect x="56" y="70" width="188" height="152" rx="18" fill="url(#bodyGrad)" stroke="#5b6070" stroke-width="2"/>
-          <!-- top lid: a lighter band, so the printer reads as a box with a top -->
           <rect x="58" y="72" width="184" height="22" rx="14" fill="url(#lidGrad)" opacity="0.9"/>
+
           <g id="statusBadge" data-mood="idle" role="status" aria-live="polite">
             <rect x="146" y="73" width="80" height="14" rx="7"/>
             <circle cx="154" cy="80" r="2.7"/>
             <text id="statusText" x="163" y="83">Connecting</text>
           </g>
-          <!-- print controls moved to top lid next to status badge -->
-          <!-- inner bevel -->
+
           <rect x="60" y="74" width="180" height="144" rx="15" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
-          <!-- side vents -->
+
           <g fill="#0b0d12" opacity="0.7">
             <rect x="63" y="128" width="6" height="4" rx="2"/>
             <rect x="63" y="136" width="6" height="4" rx="2"/>
@@ -517,16 +606,18 @@
             <rect x="231" y="136" width="6" height="4" rx="2"/>
             <rect x="231" y="144" width="6" height="4" rx="2"/>
           </g>
+
           <g id="firstLayerIndicator" aria-label="First layer in progress">
             <rect x="70" y="157" width="9" height="29" rx="4.5" fill="#171b24" stroke="#8a6030" stroke-width="1"/>
             <path d="M72.5 163 H76.5" stroke="#ffc45c" stroke-width="2" stroke-linecap="round"/>
             <path d="M72.5 170 H76.5" stroke="#9b7138" stroke-width="1.7" stroke-linecap="round"/>
             <path d="M72.5 177 H76.5" stroke="#705632" stroke-width="1.5" stroke-linecap="round"/>
           </g>
-          <!-- gantry: two end posts and the rail the nozzle travels along -->
+
           <rect x="60" y="82" width="10" height="18" rx="3" fill="#23262f"/>
           <rect x="230" y="82" width="10" height="18" rx="3" fill="#23262f"/>
           <rect x="66" y="88" width="168" height="6" rx="3" fill="url(#railGrad)"/>
+
           <g id="wifiIndicator" aria-label="Wi-Fi signal strength">
             <rect class="wifiBack" x="61" y="72" width="34" height="23" rx="7"/>
             <path class="wifiArc wifiOuter" d="M66 81 Q78 69 90 81"/>
@@ -535,7 +626,6 @@
             <circle class="wifiDot" cx="78" cy="90" r="2"/>
           </g>
 
-          <!-- nozzle head -->
           <g id="head">
             <rect x="138" y="90" width="24" height="18" rx="4" fill="#9aa0ae"/>
             <rect x="140" y="91" width="20" height="3" rx="1.5" fill="#dfe3ec" opacity="0.7"/>
@@ -543,10 +633,10 @@
             <path d="M146.5 117 L153.5 117 L150 123 Z" fill="#f5c542"/>
           </g>
 
-          <!-- the face is the printer's display -->
           <rect x="82" y="119" width="136" height="78" rx="14" fill="#15171e" stroke="#3a3e4b" stroke-width="1.5"/>
           <rect x="84" y="121" width="132" height="74" rx="12" fill="url(#screenGrad)"/>
           <rect x="84" y="121" width="132" height="74" rx="12" fill="url(#scanlines)"/>
+
           <g id="face">
             <g class="eye-open">
               <ellipse cx="120" cy="137" rx="9" ry="10" fill="url(#eyeGrad)"/>
@@ -578,9 +668,14 @@
               <path d="M110 138 L130 138"/>
               <path d="M170 138 L190 138"/>
             </g>
-            <g class="eye-sleep" fill="none" stroke="#8dd5ff" stroke-width="4" stroke-linecap="round"><path d="M110 138 Q120 146 130 138"/><path d="M170 138 Q180 146 190 138"/></g>
+            <g class="eye-sleep" fill="none" stroke="#8dd5ff" stroke-width="4" stroke-linecap="round">
+              <path d="M110 138 Q120 146 130 138"/>
+              <path d="M170 138 Q180 146 190 138"/>
+            </g>
           </g>
+
           <text id="sleepZzz" x="196" y="130">Zzz</text>
+
           <g id="mouth" aria-hidden="true">
             <path id="mouthSmile" d="M141 177 Q150 184 159 177"/>
             <path id="mouthGrin" d="M140 177 Q150 185 160 177"/>
@@ -592,14 +687,12 @@
           </g>
 
           <text id="screenPercent" x="150" y="169">--%</text>
-          <!-- print speed slider on front panel under screen -->
+
           <g id="speedControl" role="img" aria-label="Print speed, read only" aria-valuetext="Standard (100%)" data-level="2">
             <text id="speedTitle" x="84" y="204">SPEED</text>
             <text id="speedValueText" x="216" y="204" text-anchor="end" fill="#70efb6">STANDARD · 100%</text>
-
             <rect class="speedTrackBg" x="84" y="209" width="132" height="3" rx="1.5"/>
             <rect id="speedTrackFill" class="speedTrackFill" x="84" y="209" width="45" height="3" rx="1.5"/>
-
             <circle class="speedNotch" data-level="1" cx="86" cy="210.5" r="2.2">
               <title>Silent (50%)</title>
             </circle>
@@ -612,26 +705,36 @@
             <circle class="speedNotch" data-level="4" cx="214" cy="210.5" r="2.2">
               <title>Ludicrous (166%)</title>
             </circle>
-
             <text class="speedTickText" x="86" y="219">50%</text>
             <text class="speedTickText" x="129" y="219">100%</text>
             <text class="speedTickText" x="171" y="219">124%</text>
             <text class="speedTickText" x="214" y="219">166%</text>
-
             <g id="speedThumb" transform="translate(129 210.5)">
               <circle class="thumbGlow" r="7"/>
               <circle class="thumbBody" r="4.6"/>
               <circle class="thumbDot" r="1.8"/>
             </g>
+          </g>
 
+          <!-- Fixed camera button on the printer body, not on the filament row. -->
+          <g id="cameraToggle" role="button" tabindex="0" aria-label="Open camera screen"
+             aria-hidden="true" visibility="hidden" style="cursor:pointer">
+            <rect x="168" y="97" width="70" height="17" rx="5" fill="#121720" stroke="#828b9c" stroke-width="1.2"/>
+            <circle id="cameraToggleLight" cx="177" cy="105.5" r="2.2" fill="#70efb6"/>
+            <text id="cameraToggleText" x="207" y="108" text-anchor="middle" fill="#e7ebf2" font-family="Segoe UI, sans-serif" font-size="6.1" font-weight="700" letter-spacing="0.2">OPEN CAMERA</text>
           </g>
         </g>
+
+        <g id="spoolRow" aria-label="Filament spools"></g>
+        <text id="spoolPage" x="20" y="60"></text>
+
         <g id="layerBadge" aria-label="Layer progress">
           <rect x="68" y="111" width="12" height="94" rx="6" fill="#11151d" stroke="#705632" stroke-width="1"/>
           <rect id="layerFill" x="71" y="203" width="6" height="2" rx="3" fill="#ffc45c"/>
           <rect x="53" y="206" width="42" height="14" rx="4" fill="#171b24" stroke="#705632" stroke-width="0.8"/>
           <text id="layerCount" x="74" y="217">18/240</text>
         </g>
+
         <g id="elapsedBadge" class="timeBadge" aria-label="Estimated elapsed print time">
           <rect x="-26" y="145" width="82" height="42" rx="9"/>
           <text class="timeLabel" x="15" y="160">ELAPSED</text>
@@ -642,6 +745,7 @@
           <text class="timeLabel" x="285" y="160">REMAINING</text>
           <text id="remainingText" class="timeValue" x="285" y="178">--</text>
         </g>
+
         <g id="nozzleBadge" class="temperatureGauge" role="img" aria-label="Nozzle temperature gauge">
           <circle class="gaugeBack" cx="22" cy="120" r="22"/>
           <circle class="gaugeTrack" cx="22" cy="120" r="18" stroke-dasharray="84.82 113.10" transform="rotate(135 22 120)"/>
@@ -660,22 +764,24 @@
 </div>
 
 <script>
-  const svg         = document.getElementById('bambuPetSvg');
-  const petWrap     = document.getElementById('petWrap');
+  const svg = document.getElementById('bambuPetSvg');
+  const petWrap = document.getElementById('petWrap');
   const printerRoot = document.getElementById('printer-root');
-  const printHead   = document.getElementById('head');
-  const shadow      = document.getElementById('shadow');
+  const printHead = document.getElementById('head');
+  const shadow = document.getElementById('shadow');
   const screenPercent = document.getElementById('screenPercent');
   const cameraFrame = document.getElementById('cameraFrame');
   const cameraMonitor = document.getElementById('cameraMonitor');
+  const cameraStand = document.getElementById('cameraStand');
   const cameraToggle = document.getElementById('cameraToggle');
   const cameraToggleText = document.getElementById('cameraToggleText');
+
   let cameraMonitorOpen = false;
   let cameraToggleAvailable = false;
   const cameraPlaceholder = document.getElementById('cameraPlaceholder');
   const cameraPlaceholderText = document.getElementById('cameraPlaceholderText');
   const statusBadge = document.getElementById('statusBadge');
-  const statusText  = document.getElementById('statusText');
+  const statusText = document.getElementById('statusText');
   const elapsedBadge = document.getElementById('elapsedBadge');
   const elapsedText = document.getElementById('elapsedText');
   const remainingBadge = document.getElementById('remainingBadge');
@@ -687,6 +793,7 @@
   const layerBadge = document.getElementById('layerBadge');
   const layerCount = document.getElementById('layerCount');
   const layerFill = document.getElementById('layerFill');
+
   let previousStateKey = null;
   let stateReactionTimer = null;
   let previousMood = null;
@@ -715,9 +822,9 @@
     return String(value).replace(/67/g, '6*');
   }
 
-  // Gauge arc: r=18, 270 degrees of the circle (a 90 degree gap at the bottom).
   const GAUGE_CIRC = 2 * Math.PI * 18;
   const GAUGE_ARC = GAUGE_CIRC * 0.75;
+
   function setGauge(fillEl, temp, target) {
     const t = Number(temp);
     const g = Number(target);
@@ -729,14 +836,14 @@
 
   function render(s) {
     const percent = s && s.configured && s.has_data ? Number(s.percent) : NaN;
-    screenPercent.textContent = displayValue(Number.isFinite(percent)
-      ? `${percent}%`
-      : '--%');
+
+    screenPercent.textContent = displayValue(Number.isFinite(percent) ? `${percent}%` : '--%');
     const headProgress = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 50;
     printHead.setAttribute('transform', `translate(${headProgress * 1.44 - 72} 0)`);
 
     let mood = 'idle';
     let label = 'Not configured';
+
     if (s && s.configured) {
       if (!s.connected) {
         mood = 'offline';
@@ -757,11 +864,13 @@
         })[mood] || 'Idle';
       }
     }
+
     statusBadge.dataset.mood = mood;
     currentMood = mood;
     svg.classList.toggle('sleeping', !!(s && s.sleeping));
     svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
     statusText.textContent = displayValue(label);
+
     let expression = 'neutral';
     if (!s || !s.configured || !s.connected || !s.has_data) {
       expression = 'worried';
@@ -778,9 +887,11 @@
     } else if (mood === 'run') {
       expression = 'happy';
     }
+
     svg.dataset.expression = expression;
     svg.classList.toggle('printing', mood === 'run' && !s.warming
       && Number.isFinite(percent) && percent < 90);
+
     const stateKey = [
       mood,
       s && s.connected ? 'connected' : 'disconnected',
@@ -789,6 +900,7 @@
       mood === 'run' && Number.isFinite(percent) && percent >= 90 && percent < 100
         ? 'near-finish' : 'not-near-finish'
     ].join(':');
+
     if (previousStateKey !== null && stateKey !== previousStateKey) {
       svg.classList.remove('state-change');
       void svg.getBoundingClientRect();
@@ -807,39 +919,46 @@
     const showTimes = s && s.connected && s.has_data
       && ['run', 'pause'].includes(mood)
       && Number.isFinite(elapsed) && Number.isFinite(remaining);
+
     elapsedBadge.classList.toggle('visible', showTimes);
     remainingBadge.classList.toggle('visible', showTimes);
+
     if (showTimes) {
       elapsedText.textContent = displayValue(`~${formatDuration(elapsed)}`);
       remainingText.textContent = displayValue(formatDuration(remaining));
     }
-    // Temperature gauges are always shown; an empty dial means no reading yet.
+
     setGauge(nozzleFill, s && s.nozzle_temp, s && s.nozzle_target);
     setGauge(bedFill, s && s.bed_temp, s && s.bed_target);
+
     const layer = s && s.layer_num != null ? Number(s.layer_num) : NaN;
     const totalLayers = s && s.total_layers != null ? Number(s.total_layers) : NaN;
     const hasLayerProgress = s && s.has_data && ['run', 'pause'].includes(mood)
       && Number.isFinite(layer) && Number.isFinite(totalLayers) && totalLayers > 0;
+
     const crossedMilestone = mood === 'run' && previousMood === 'run'
       && Number.isFinite(percent) && Number.isFinite(previousPercent)
       && [25, 50, 75].some((milestone) => previousPercent < milestone && percent >= milestone);
+
     const changedLayer = mood === 'run' && hasLayerProgress
       && previousLayer !== null && Math.round(layer) > previousLayer;
+
     if (crossedMilestone || changedLayer) {
-      printerRoot.classList.remove('progress-hop');
-      printerRoot.classList.remove('layer-hop');
-      shadow.classList.remove('progress-hop');
-      shadow.classList.remove('layer-hop');
+      printerRoot.classList.remove('progress-hop', 'layer-hop');
+      shadow.classList.remove('progress-hop', 'layer-hop');
       void printerRoot.getBoundingClientRect();
+
       const hopClass = changedLayer ? 'layer-hop' : 'progress-hop';
       printerRoot.classList.add(hopClass);
       shadow.classList.add(hopClass);
+
       clearTimeout(progressHopTimer);
       progressHopTimer = setTimeout(() => {
         printerRoot.classList.remove('progress-hop', 'layer-hop');
         shadow.classList.remove('progress-hop', 'layer-hop');
       }, changedLayer ? 650 : 500);
     }
+
     if (crossedMilestone) {
       svg.classList.remove('milestone-blink');
       void svg.getBoundingClientRect();
@@ -847,12 +966,15 @@
       clearTimeout(milestoneBlinkTimer);
       milestoneBlinkTimer = setTimeout(() => svg.classList.remove('milestone-blink'), 400);
     }
+
     previousPercent = Number.isFinite(percent) ? percent : null;
     previousLayer = hasLayerProgress ? Math.round(layer) : null;
     previousMood = mood;
+
     const showFirstLayer = hasLayerProgress && Math.round(layer) === 1;
     firstLayerIndicator.classList.toggle('visible', showFirstLayer);
     layerBadge.classList.toggle('visible', hasLayerProgress && !showFirstLayer);
+
     if (hasLayerProgress && !showFirstLayer) {
       const progress = Math.max(0, Math.min(1, layer / totalLayers));
       const fillHeight = Math.max(2, 90 * progress);
@@ -860,6 +982,9 @@
       layerFill.setAttribute('height', String(fillHeight));
       layerCount.textContent = displayValue(`${Math.round(layer)}/${Math.round(totalLayers)}`);
     }
+
+    updateSpools(s && s.has_data ? s.filaments : []);
+
     const wifiLevel = s && s.wifi_level != null ? Number(s.wifi_level) : NaN;
     const hasWifiLevel = Number.isFinite(wifiLevel) && wifiLevel >= 1 && wifiLevel <= 3;
     wifiIndicator.classList.toggle('visible', hasWifiLevel);
@@ -873,6 +998,7 @@
         const mag = Number(s.spd_mag);
         reportedLvl = mag <= 70 ? 1 : mag <= 110 ? 2 : mag <= 145 ? 3 : 4;
       }
+
       if (reportedLvl && reportedLvl >= 1 && reportedLvl <= 4 && reportedLvl !== currentSpeedLevel) {
         currentSpeedLevel = reportedLvl;
         updateSpeedUI(reportedLvl);
@@ -882,28 +1008,45 @@
 
   const lightButton = document.getElementById('lightButton');
   const lightButtonTitle = document.getElementById('lightButtonTitle');
+
   function renderLightButton() {
     lightButton.classList.toggle('on', chamberLightOn);
     lightButton.setAttribute('aria-pressed', String(chamberLightOn));
     lightButtonTitle.textContent = `Chamber light: ${chamberLightOn ? 'on' : 'off'}`;
   }
+
   function bindControl(el, fn) {
-    el.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
-    el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); fn(); } });
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      fn();
+    });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        fn();
+      }
+    });
   }
+
   bindControl(lightButton, async () => {
     const next = !chamberLightOn;
     const result = await window.pywebview?.api?.control_bambu?.('chamber_light', next ? 'on' : 'off');
-    if (!result || result.ok) { chamberLightOn = next; renderLightButton(); }
+    if (!result || result.ok) {
+      chamberLightOn = next;
+      renderLightButton();
+    }
   });
+
   renderLightButton();
 
   const SPEED_LEVELS = [
     { level: 1, name: 'SILENT', pct: 50, color: '#60cdff', x: 86 },
     { level: 2, name: 'STANDARD', pct: 100, color: '#70efb6', x: 129 },
     { level: 3, name: 'SPORT', pct: 124, color: '#ffd27a', x: 171 },
-    { level: 4, name: 'LUDICROUS', pct: 166, color: '#ff8b96', x: 214 },
+    { level: 4, name: 'LUDICROUS', pct: 166, color: '#ff8b96', x: 214 }
   ];
+
   const speedControl = document.getElementById('speedControl');
   const speedValueText = document.getElementById('speedValueText');
   const speedTrackFill = document.getElementById('speedTrackFill');
@@ -914,29 +1057,33 @@
   function updateSpeedUI(level, visualX = null) {
     const config = SPEED_LEVELS.find((s) => s.level === level) || SPEED_LEVELS[1];
     const targetX = visualX != null ? visualX : config.x;
+
     speedControl.dataset.level = String(config.level);
     speedControl.setAttribute('aria-valuenow', String(config.level));
     speedControl.setAttribute('aria-valuetext', `${config.name} (${config.pct}%)`);
     speedThumb.setAttribute('transform', `translate(${targetX} 210.5)`);
+
     const fillWidth = Math.max(0, Math.min(132, targetX - 84));
     speedTrackFill.setAttribute('width', String(fillWidth));
     speedTrackFill.style.fill = config.color;
     speedValueText.textContent = `${config.name} · ${config.pct}%`;
     speedValueText.setAttribute('fill', config.color);
+
     speedNotches.forEach((notch) => {
       const notchLevel = Number(notch.dataset.level);
       notch.classList.toggle('active', notchLevel <= config.level);
     });
   }
 
-
   updateSpeedUI(currentSpeedLevel);
 
   async function pollCamera() {
     if (!cameraMonitorOpen || cameraPollInFlight || !window.pywebview?.api?.get_bambu_camera_snapshot) return;
+
     cameraPollInFlight = true;
     try {
       const camera = await window.pywebview.api.get_bambu_camera_snapshot(cameraLastUpdated);
+
       if (!camera || !camera.configured) {
         setCameraToggleAvailable(false);
         cameraFrame.setAttribute('visibility', 'hidden');
@@ -948,15 +1095,13 @@
         cameraFrame.setAttribute('visibility', 'visible');
         cameraPlaceholder.style.display = 'none';
         cameraLastUpdated = camera.updated_at;
-      } else {
-        if (!camera.connected || camera.error) {
-          cameraFrame.setAttribute('visibility', 'hidden');
-          cameraPlaceholder.style.display = 'inline';
-          cameraPlaceholderText.textContent = camera.error
-            ? camera.error.toUpperCase()
-            : 'CONNECTING TO CAMERA…';
-          cameraPlaceholderText.setAttribute('font-size', camera.error ? '5.5' : '7');
-        }
+      } else if (!camera.connected || camera.error) {
+        cameraFrame.setAttribute('visibility', 'hidden');
+        cameraPlaceholder.style.display = 'inline';
+        cameraPlaceholderText.textContent = camera.error
+          ? camera.error.toUpperCase()
+          : 'CONNECTING TO CAMERA…';
+        cameraPlaceholderText.setAttribute('font-size', camera.error ? '5.5' : '7');
       }
     } catch (error) {
       console.error('Could not fetch Bambu camera frame');
@@ -978,6 +1123,7 @@
 
   async function pollCameraConfiguration() {
     if (!window.pywebview?.api?.get_bambu_camera_config) return;
+
     try {
       const camera = await window.pywebview.api.get_bambu_camera_config();
       setCameraToggleAvailable(!!(camera && camera.configured));
@@ -990,14 +1136,17 @@
   function setCameraMonitorOpen(open) {
     cameraMonitorOpen = !!open && cameraToggleAvailable;
     cameraMonitor.setAttribute('visibility', cameraMonitorOpen ? 'visible' : 'hidden');
+    cameraStand.setAttribute('visibility', cameraMonitorOpen ? 'visible' : 'hidden');
     cameraToggle.setAttribute('aria-label', cameraMonitorOpen ? 'Close camera screen' : 'Open camera screen');
     cameraToggleText.textContent = cameraMonitorOpen ? 'CLOSE CAMERA' : 'OPEN CAMERA';
+
     const api = window.pywebview?.api;
     if (api?.set_bambu_camera_stream) {
       api.set_bambu_camera_stream(cameraMonitorOpen).catch(() => {
         console.error('Could not update Bambu camera stream state');
       });
     }
+
     if (!cameraMonitorOpen) {
       cameraFrame.setAttribute('visibility', 'hidden');
       cameraPlaceholder.style.display = 'inline';
@@ -1017,7 +1166,134 @@
     }
   });
 
-  // Polled from Python's read_bambu_status() - see the Bambu section in pet_app.py.
+  // ===== Filament spools: compact 3D-style spool models =====
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const SPOOLS_PER_PAGE = 5;
+  const SPOOL_SPACING = 52;
+  const SPOOL_CY = 47;
+  const spoolRow = document.getElementById('spoolRow');
+  const spoolPageMark = document.getElementById('spoolPage');
+  let spoolList = [];
+  let spoolKey = null;
+  let spoolPage = 0;
+
+  function svgNode(tag, attrs, text) {
+    const node = document.createElementNS(SVG_NS, tag);
+    Object.entries(attrs || {}).forEach(([name, value]) => node.setAttribute(name, String(value)));
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function spoolPageCount() {
+    const loaded = spoolList.filter(spool => spool && !spool.empty).length;
+    return Math.max(1, Math.ceil(loaded / SPOOLS_PER_PAGE));
+  }
+
+  function spoolTooltip(spool) {
+    const parts = [`${spool.slot}: ${spool.name || 'unknown filament'}`];
+    if (spool.remain_pct != null) parts.push(`${spool.remain_pct}% left`);
+    if (spool.grams != null) parts.push(`about ${spool.grams} g`);
+    return parts.join(' · ');
+  }
+
+  function buildSpool(spool, x) {
+    const g = svgNode('g', { class: 'spool' });
+    g.appendChild(svgNode('title', {}, spoolTooltip(spool)));
+
+    g.appendChild(svgNode('rect', {
+      class: 'spoolFrame', x: x - 24, y: 16, width: 48, height: 54, rx: 7
+    }));
+    g.appendChild(svgNode('rect', {
+      class: 'spoolFrameInner', x: x - 22.8, y: 17.2, width: 45.6, height: 51.6, rx: 6
+    }));
+
+    const color = /^#[0-9a-f]{6}$/i.test(spool.color || '') ? spool.color : '#808080';
+    const cx = x, cy = SPOOL_CY, rx = 15, ry = 14.5, depth = 4;
+
+    g.appendChild(svgNode('ellipse', {
+      cx, cy, rx, ry, fill: '#343944', stroke: '#171a20', 'stroke-width': 1
+    }));
+    g.appendChild(svgNode('path', {
+      d: `M ${cx-rx} ${cy} A ${rx} ${ry} 0 0 0 ${cx+rx} ${cy} L ${cx+rx} ${cy+depth} A ${rx} ${ry} 0 0 1 ${cx-rx} ${cy+depth} Z`,
+      fill: color
+    }));
+    g.appendChild(svgNode('ellipse', {
+      cx, cy: cy + depth, rx, ry, fill: color, stroke: '#252932', 'stroke-width': 0.8
+    }));
+
+    g.appendChild(svgNode('ellipse', {
+      cx, cy, rx, ry, fill: 'none', stroke: '#c5cad2', 'stroke-width': 2.2
+    }));
+    g.appendChild(svgNode('ellipse', {
+      cx, cy, rx: 8.2, ry: 8.2, fill: '#454b56', stroke: '#171a20', 'stroke-width': 1
+    }));
+    g.appendChild(svgNode('ellipse', {
+      cx, cy, rx: 4.1, ry: 4.3, fill: '#171b22', stroke: '#aeb5c0', 'stroke-width': 1
+    }));
+    g.appendChild(svgNode('ellipse', {
+      cx: cx - 0.8, cy: cy - 1.0, rx: 1.4, ry: 1.8, fill: '#d7dce4', opacity: 0.8
+    }));
+
+    [11.5, 13, 14].forEach(r => g.appendChild(svgNode('ellipse', {
+      cx, cy, rx: r, ry: r * 0.97, fill: 'none', stroke: color, 'stroke-width': 0.65
+    })));
+
+    const label = `${spool.slot} ${spool.name || ''}`.trim();
+    const shownLabel = label.length > 17 ? `${label.slice(0, 16)}…` : label;
+    const labelAttrs = { class: 'spoolSlot', x, y: 26 };
+
+    if (shownLabel.length > 13) {
+      labelAttrs.textLength = 43;
+      labelAttrs.lengthAdjust = 'spacingAndGlyphs';
+    }
+
+    g.appendChild(svgNode('text', labelAttrs, shownLabel));
+    return g;
+  }
+
+  function renderSpools() {
+    const loaded = spoolList.filter(spool => spool && !spool.empty);
+    const pages = Math.max(1, Math.ceil(loaded.length / SPOOLS_PER_PAGE));
+
+    if (spoolPage >= pages) spoolPage = 0;
+
+    const shown = loaded.slice(
+      spoolPage * SPOOLS_PER_PAGE,
+      (spoolPage + 1) * SPOOLS_PER_PAGE
+    );
+
+    const n = shown.length;
+    const xs = shown.map((_, i) => 150 + (i - (n - 1) / 2) * SPOOL_SPACING);
+
+    spoolRow.replaceChildren();
+    shown.forEach((spool, i) => {
+      spoolRow.appendChild(buildSpool(spool, xs[i]));
+    });
+
+    spoolPageMark.textContent = pages > 1 ? `${spoolPage + 1}/${pages}` : '';
+  }
+
+  function updateSpools(list) {
+    const next = Array.isArray(list) ? list : [];
+    const key = JSON.stringify(next);
+
+    if (key === spoolKey) return;
+
+    spoolKey = key;
+    spoolList = next;
+    renderSpools();
+  }
+
+  spoolRow.addEventListener('click', (e) => {
+    e.stopPropagation();
+
+    const pages = spoolPageCount();
+    if (pages > 1) {
+      spoolPage = (spoolPage + 1) % pages;
+      renderSpools();
+    }
+  });
+
   function poll() {
     if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_bambu_status)) return;
     window.pywebview.api.get_bambu_status().then(render).catch(() => {});
@@ -1029,6 +1305,7 @@
         if (cfg && cfg.size) applyPetScale(cfg.size);
       });
     }
+
     poll();
     pollCameraConfiguration();
     setInterval(poll, 1500);
@@ -1039,7 +1316,7 @@
   function triggerJump() {
     printerRoot.classList.remove('jump');
     shadow.classList.remove('jump');
-    void printerRoot.getBoundingClientRect();  // force a reflow so the animation restarts
+    void printerRoot.getBoundingClientRect();
 
     printerRoot.classList.add('jump');
     shadow.classList.add('jump');
@@ -1068,10 +1345,12 @@
       if (e.button === 1) e.preventDefault();
       return;
     }
+
     dragStartX = e.screenX;
     dragStartY = e.screenY;
     movedDistance = 0;
     isDragging = false;
+
     if (window.pywebview && window.pywebview.api && window.pywebview.api.start_drag) {
       window.pywebview.api.start_drag();
     }
@@ -1079,14 +1358,18 @@
 
   window.addEventListener('mousemove', (e) => {
     if (dragStartX === undefined) return;
+
     const dx = e.screenX - dragStartX;
     const dy = e.screenY - dragStartY;
     movedDistance += Math.abs(dx) + Math.abs(dy);
+
     if (movedDistance > DRAG_THRESHOLD) {
       isDragging = true;
+
       if (window.pywebview && window.pywebview.api && window.pywebview.api.drag_move) {
         window.pywebview.api.drag_move(dx, dy);
       }
+
       dragStartX = e.screenX;
       dragStartY = e.screenY;
     }
@@ -1094,22 +1377,29 @@
 
   window.addEventListener('mouseup', (e) => {
     if (dragStartX === undefined) return;
+
     if (isDragging) {
       if (window.pywebview && window.pywebview.api && window.pywebview.api.drop) {
         window.pywebview.api.drop();
       }
-    } else if (!(e.target instanceof Node) || (!cameraToggle.contains(e.target)
-      && !document.getElementById('lightButton').contains(e.target)
-      && !document.getElementById('speedControl').contains(e.target))) {
+    } else if (!(e.target instanceof Node) || (
+      !cameraToggle.contains(e.target) &&
+      !document.getElementById('lightButton').contains(e.target) &&
+      !document.getElementById('speedControl').contains(e.target) &&
+      !spoolRow.contains(e.target)
+    )) {
       handlePetClick();
     }
+
     dragStartX = undefined;
     isDragging = false;
   });
 
   svg.addEventListener('auxclick', (e) => {
     if (e.button !== 1) return;
+
     e.preventDefault();
+
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings_window) {
       window.pywebview.api.open_settings_window();
     }

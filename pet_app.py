@@ -39,7 +39,7 @@ PETS = {
 }
 
 WIN_W, WIN_H = 340, 220  # wider than the 280px-wide sprite so ears/hover-scale never clip
-BAMBU_WIN_W, BAMBU_WIN_H = 500, 420
+BAMBU_WIN_W, BAMBU_WIN_H = 500, 500  # room above the printer for the camera screen and spools
 DEFAULT_TASKBAR_MARGIN = 46  # used only as an initial guess for calibration
 
 CONFIG_DIR = os.path.expandvars(r"%LOCALAPPDATA%\DesktopPet")
@@ -2002,9 +2002,11 @@ def bambu_summary(configured, data, connected, error):
         "wifi_level": None,
         "spd_lvl": None,
         "spd_mag": None,
+        "filaments": [],
     }
     if not configured or not data:
         return out
+    out["filaments"] = bambu_filaments(data)
     st = data.get("gcode_state", "IDLE")
     out["mood"] = BAMBU_STATES.get(st, ("", "idle"))[1]
     try:
@@ -2085,6 +2087,67 @@ def bambu_summary(configured, data, connected, error):
     elif out["spd_lvl"] is not None and out["spd_mag"] is None:
         out["spd_mag"] = {1: 50, 2: 100, 3: 124, 4: 166}.get(out["spd_lvl"])
     return out
+
+
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _bambu_spool(tray, slot):
+    """
+    One AMS tray (or the external spool) as the pet lists it. Pure.
+
+    `remain` is the printer's estimate of how full the spool is. It is only
+    trustworthy for spools with an RFID tag: a third-party spool reports an
+    all-zero tag id, and any `remain` it sends there is not real. Those show
+    as unknown instead of as an empty spool.
+    """
+    tray_type = str(tray.get("tray_type") or "").strip()
+    spool = {
+        "slot": slot,
+        "empty": not tray_type,
+        "name": str(tray.get("tray_sub_brands") or "").strip() or tray_type,
+        "color": None,
+        "remain_pct": None,
+        "grams": None,
+    }
+    color = str(tray.get("tray_color") or "").strip()
+    if len(color) >= 6 and all(c in _HEX_DIGITS for c in color[:6]):
+        spool["color"] = "#" + color[:6].upper()
+    try:
+        remain = float(tray.get("remain"))
+    except (TypeError, ValueError):
+        remain = -1.0
+    tag = str(tray.get("tray_uuid") or "")
+    no_tag = "tray_uuid" in tray and not tag.strip("0")
+    if math.isfinite(remain) and 0 <= remain <= 100 and not no_tag:
+        spool["remain_pct"] = int(round(remain))
+        try:
+            weight = float(tray.get("tray_weight"))
+        except (TypeError, ValueError):
+            weight = 0.0
+        if math.isfinite(weight) and weight > 0:
+            spool["grams"] = int(round(weight * remain / 100))
+    return spool
+
+
+def bambu_filaments(data):
+    """
+    Every AMS slot plus the external spool, in order, from the `ams` block of
+    a print report. Pure; a malformed block just yields fewer entries.
+    """
+    spools = []
+    ams = data.get("ams")
+    units = ams.get("ams") if isinstance(ams, dict) else None
+    for unit_index, unit in enumerate(units if isinstance(units, list) else []):
+        trays = unit.get("tray") if isinstance(unit, dict) else None
+        letter = chr(ord("A") + min(max(unit_index, 0), 25))
+        for tray_index, tray in enumerate(trays if isinstance(trays, list) else []):
+            if isinstance(tray, dict):
+                spools.append(_bambu_spool(tray, f"{letter}{tray_index + 1}"))
+    external = data.get("vt_tray")
+    if isinstance(external, dict):
+        spools.append(_bambu_spool(external, "EXT"))
+    return spools
 
 
 def start_bambu_mqtt(cfg, gen):
