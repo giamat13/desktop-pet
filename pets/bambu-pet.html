@@ -228,39 +228,32 @@
   #remainingBadge rect { stroke: #7ff0bb; }
   #remainingBadge text { fill: #7ff0bb; }
 
-  .temperatureBadge { display: none; }
-  .temperatureBadge.visible { display: inline; }
-  .temperatureBadge rect {
+  /* Temperature gauges: always visible round dials, filled by temp / target. */
+  .temperatureGauge { display: inline; }
+  .temperatureGauge .gaugeBack {
     fill: #171b24;
-    stroke-width: 1.5;
-  }
-  .temperatureBadge text {
-    text-anchor: middle;
-    font-family: "Segoe UI", system-ui, sans-serif;
-  }
-  .temperatureBadge .temperatureLabel {
-    font-size: 7px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-  }
-  .temperatureBadge .temperatureValue {
-    font-size: 9px;
-    font-weight: 700;
-  }
-  .temperatureBadge .temperatureTrack {
-    fill: #0c1017;
     stroke: #46505e;
-    stroke-width: 0.7;
+    stroke-width: 1;
   }
-  .temperatureBadge .temperatureFill {
-    rx: 2;
+  .temperatureGauge .gaugeTrack {
+    fill: none;
+    stroke: #0c1017;
+    stroke-width: 4;
   }
-  #nozzleBadge .temperatureFrame { stroke: #ffc45c; }
-  #nozzleBadge text { fill: #ffc45c; }
-  #nozzleBadge .temperatureFill { fill: #ffc45c; }
-  #bedBadge .temperatureFrame { stroke: #8dd5ff; }
-  #bedBadge text { fill: #8dd5ff; }
-  #bedBadge .temperatureFill { fill: #8dd5ff; }
+  .temperatureGauge .gaugeFill {
+    fill: none;
+    stroke-width: 4;
+    transition: stroke-dasharray 0.4s ease-out;
+  }
+  .temperatureGauge .gaugeLabel {
+    text-anchor: middle;
+    font: 700 5.5px "Segoe UI", system-ui, sans-serif;
+    letter-spacing: 0.3px;
+  }
+  #nozzleBadge .gaugeFill { stroke: #ffc45c; }
+  #nozzleBadge .gaugeLabel { fill: #ffc45c; }
+  #bedBadge .gaugeFill { stroke: #8dd5ff; }
+  #bedBadge .gaugeLabel { fill: #8dd5ff; }
 
   #firstLayerIndicator, #layerBadge { display: none; }
   #firstLayerIndicator.visible, #layerBadge.visible { display: inline; }
@@ -649,19 +642,17 @@
           <text class="timeLabel" x="285" y="160">REMAINING</text>
           <text id="remainingText" class="timeValue" x="285" y="178">--</text>
         </g>
-        <g id="nozzleBadge" class="temperatureBadge" aria-label="Nozzle temperature">
-          <rect class="temperatureFrame" x="-32" y="99" width="94" height="42" rx="9" fill="#171b24" stroke-width="1.5"/>
-          <text class="temperatureLabel" x="15" y="110">NOZZLE</text>
-          <rect class="temperatureTrack" x="-22" y="115" width="74" height="6" rx="3"/>
-          <rect id="nozzleFill" class="temperatureFill" x="-22" y="115" width="0" height="6"/>
-          <text id="nozzleText" class="temperatureValue" x="15" y="136">-- / --°</text>
+        <g id="nozzleBadge" class="temperatureGauge" role="img" aria-label="Nozzle temperature gauge">
+          <circle class="gaugeBack" cx="22" cy="120" r="22"/>
+          <circle class="gaugeTrack" cx="22" cy="120" r="18" stroke-dasharray="84.82 113.10" transform="rotate(135 22 120)"/>
+          <circle id="nozzleFill" class="gaugeFill" cx="22" cy="120" r="18" stroke-dasharray="0 113.10" transform="rotate(135 22 120)"/>
+          <text class="gaugeLabel" x="22" y="122.5">NOZZLE</text>
         </g>
-        <g id="bedBadge" class="temperatureBadge" aria-label="Bed temperature">
-          <rect class="temperatureFrame" x="238" y="99" width="94" height="42" rx="9" fill="#171b24" stroke-width="1.5"/>
-          <text class="temperatureLabel" x="285" y="110">BED</text>
-          <rect class="temperatureTrack" x="248" y="115" width="74" height="6" rx="3"/>
-          <rect id="bedFill" class="temperatureFill" x="248" y="115" width="0" height="6"/>
-          <text id="bedText" class="temperatureValue" x="285" y="136">-- / --°</text>
+        <g id="bedBadge" class="temperatureGauge" role="img" aria-label="Bed temperature gauge">
+          <circle class="gaugeBack" cx="278" cy="120" r="22"/>
+          <circle class="gaugeTrack" cx="278" cy="120" r="18" stroke-dasharray="84.82 113.10" transform="rotate(135 278 120)"/>
+          <circle id="bedFill" class="gaugeFill" cx="278" cy="120" r="18" stroke-dasharray="0 113.10" transform="rotate(135 278 120)"/>
+          <text class="gaugeLabel" x="278" y="122.5">BED</text>
         </g>
       </g>
     </svg>
@@ -689,11 +680,7 @@
   const elapsedText = document.getElementById('elapsedText');
   const remainingBadge = document.getElementById('remainingBadge');
   const remainingText = document.getElementById('remainingText');
-  const nozzleBadge = document.getElementById('nozzleBadge');
-  const nozzleText = document.getElementById('nozzleText');
   const nozzleFill = document.getElementById('nozzleFill');
-  const bedBadge = document.getElementById('bedBadge');
-  const bedText = document.getElementById('bedText');
   const bedFill = document.getElementById('bedFill');
   const firstLayerIndicator = document.getElementById('firstLayerIndicator');
   const wifiIndicator = document.getElementById('wifiIndicator');
@@ -726,6 +713,18 @@
 
   function displayValue(value) {
     return String(value).replace(/67/g, '6*');
+  }
+
+  // Gauge arc: r=18, 270 degrees of the circle (a 90 degree gap at the bottom).
+  const GAUGE_CIRC = 2 * Math.PI * 18;
+  const GAUGE_ARC = GAUGE_CIRC * 0.75;
+  function setGauge(fillEl, temp, target) {
+    const t = Number(temp);
+    const g = Number(target);
+    const frac = Number.isFinite(t) && Number.isFinite(g) && g > 0
+      ? Math.max(0, Math.min(1, t / g))
+      : 0;
+    fillEl.setAttribute('stroke-dasharray', `${(frac * GAUGE_ARC).toFixed(2)} ${GAUGE_CIRC.toFixed(2)}`);
   }
 
   function render(s) {
@@ -805,9 +804,6 @@
 
     const elapsed = s && s.elapsed_minutes != null ? Number(s.elapsed_minutes) : NaN;
     const remaining = s && s.remaining_minutes != null ? Number(s.remaining_minutes) : NaN;
-    const showWarmup = s && s.connected && s.has_data && s.warming === true;
-    const nozzleReady = s && s.nozzle_temp != null && s.nozzle_target != null;
-    const bedReady = s && s.bed_temp != null && s.bed_target != null;
     const showTimes = s && s.connected && s.has_data
       && ['run', 'pause'].includes(mood)
       && Number.isFinite(elapsed) && Number.isFinite(remaining);
@@ -817,16 +813,9 @@
       elapsedText.textContent = displayValue(`~${formatDuration(elapsed)}`);
       remainingText.textContent = displayValue(formatDuration(remaining));
     }
-    nozzleBadge.classList.toggle('visible', showWarmup && nozzleReady);
-    bedBadge.classList.toggle('visible', showWarmup && bedReady);
-    if (showWarmup && nozzleReady) {
-      nozzleText.textContent = displayValue(`${s.nozzle_temp}° / ${s.nozzle_target}°`);
-      nozzleFill.setAttribute('width', String(74 * Math.min(1, s.nozzle_temp / s.nozzle_target)));
-    }
-    if (showWarmup && bedReady) {
-      bedText.textContent = displayValue(`${s.bed_temp}° / ${s.bed_target}°`);
-      bedFill.setAttribute('width', String(74 * Math.min(1, s.bed_temp / s.bed_target)));
-    }
+    // Temperature gauges are always shown; an empty dial means no reading yet.
+    setGauge(nozzleFill, s && s.nozzle_temp, s && s.nozzle_target);
+    setGauge(bedFill, s && s.bed_temp, s && s.bed_target);
     const layer = s && s.layer_num != null ? Number(s.layer_num) : NaN;
     const totalLayers = s && s.total_layers != null ? Number(s.total_layers) : NaN;
     const hasLayerProgress = s && s.has_data && ['run', 'pause'].includes(mood)
