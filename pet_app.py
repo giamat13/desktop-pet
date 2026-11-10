@@ -574,6 +574,7 @@ def launch_bambu_studio():
 
 
 _watched_pets = set()  # hwnds that already have a sync_desktop_visibility watcher
+_topmost_watched_pets = set()  # hwnds that already have a keep_topmost_over_taskbar watcher
 
 
 def show_window_async(hwnd, cmd):
@@ -842,9 +843,9 @@ def keep_topmost_over_taskbar(hwnd, pet):
     (taskbar, alt-tab) can ever get in front, and correcting exactly that is
     the point.
     """
-    if hwnd in _watched_pets:  # toggling modes must not stack watchers
+    if hwnd in _topmost_watched_pets:  # toggling modes must not stack watchers
         return
-    _watched_pets.add(hwnd)
+    _topmost_watched_pets.add(hwnd)
 
     def _watch():
         user32 = USER32
@@ -868,7 +869,7 @@ def keep_topmost_over_taskbar(hwnd, pet):
                 except Exception:
                     pass  # a transient shell state must never kill the watcher
         finally:
-            _watched_pets.discard(hwnd)
+            _topmost_watched_pets.discard(hwnd)
 
     threading.Thread(target=_watch, daemon=True).start()
 
@@ -1999,6 +2000,8 @@ def bambu_summary(configured, data, connected, error):
         "warming": False,
         "total_layers": None,
         "wifi_level": None,
+        "spd_lvl": None,
+        "spd_mag": None,
     }
     if not configured or not data:
         return out
@@ -2065,6 +2068,22 @@ def bambu_summary(configured, data, connected, error):
                 ))
     except (TypeError, ValueError, OverflowError):
         pass
+    try:
+        spd_lvl = int(data.get("spd_lvl"))
+        if 1 <= spd_lvl <= 4:
+            out["spd_lvl"] = spd_lvl
+    except (TypeError, ValueError):
+        pass
+    try:
+        spd_mag = int(data.get("spd_mag"))
+        if spd_mag > 0:
+            out["spd_mag"] = spd_mag
+    except (TypeError, ValueError):
+        pass
+    if out["spd_lvl"] is None and out["spd_mag"] is not None:
+        out["spd_lvl"] = {50: 1, 100: 2, 124: 3, 166: 4}.get(out["spd_mag"])
+    elif out["spd_lvl"] is not None and out["spd_mag"] is None:
+        out["spd_mag"] = {1: 50, 2: 100, 3: 124, 4: 166}.get(out["spd_lvl"])
     return out
 
 
@@ -2129,6 +2148,14 @@ def start_bambu_mqtt(cfg, gen):
     return client
 
 
+BAMBU_SPEED_MAP = {
+    "1": "1", "silent": "1", "quiet": "1", "50": "1",
+    "2": "2", "standard": "2", "normal": "2", "100": "2",
+    "3": "3", "sport": "3", "fast": "3", "124": "3",
+    "4": "4", "ludicrous": "4", "max": "4", "166": "4",
+}
+
+
 def send_bambu_command(command, value=None):
     """Publish a documented printer control command on the active MQTT client."""
     with _bambu_lock:
@@ -2138,8 +2165,15 @@ def send_bambu_command(command, value=None):
             return {"ok": False, "error": "Printer is not connected"}
         topic = f"device/{cfg['serial']}/request"
         sequence = str(int(time.time() * 1000) % 1000000)
+        speed_level = None
         if command in ("pause", "resume", "stop"):
             payload = {"print": {"sequence_id": sequence, "command": command, "param": ""}}
+        elif command == "print_speed":
+            key = str(value).strip().lower() if value is not None else "2"
+            speed_level = BAMBU_SPEED_MAP.get(key)
+            if not speed_level:
+                return {"ok": False, "error": f"Invalid speed level: {value}"}
+            payload = {"print": {"sequence_id": sequence, "command": "print_speed", "param": speed_level}}
         elif command == "chamber_light" and value in ("on", "off"):
             payload = {"system": {
                 "sequence_id": sequence, "command": "ledctrl",
@@ -2150,7 +2184,15 @@ def send_bambu_command(command, value=None):
         else:
             return {"ok": False, "error": "Unsupported printer command"}
         info = client.publish(topic, json.dumps(payload), qos=1)
-    return {"ok": getattr(info, "rc", 0) == 0}
+        ok = getattr(info, "rc", 0) == 0
+        if ok and command == "print_speed" and speed_level is not None:
+            try:
+                lvl = int(speed_level)
+                _bambu_data["spd_lvl"] = lvl
+                _bambu_data["spd_mag"] = {1: 50, 2: 100, 3: 124, 4: 166}.get(lvl, 100)
+            except Exception:
+                pass
+    return {"ok": ok}
 
 
 def _stop_bambu_client(client):

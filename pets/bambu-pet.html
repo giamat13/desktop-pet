@@ -82,9 +82,9 @@
     fill: #70efb6;
   }
   .controlButton { cursor: pointer; }
-  .controlButton .btnBg { fill: #202733; stroke: #738096; stroke-width: 1; }
+  .controlButton .btnBg { fill: #202733; stroke: #738096; stroke-width: 1; transition: fill 0.15s, stroke 0.15s; }
   .controlButton .btnIcon { fill: #e7ebf2; stroke: #e7ebf2; stroke-width: 0.8; stroke-linejoin: round; pointer-events: none; }
-  .controlButton:hover .btnBg { fill: #354154; }
+  .controlButton:hover .btnBg { fill: #354154; stroke: #9ba7be; }
   .controlButton:focus-visible .btnBg { stroke: #ffc45c; }
   .controlButton .resumeIcon { display: none; }
   #pauseButton[data-action="resume"] .pauseIcon { display: none; }
@@ -92,6 +92,111 @@
   #pauseButton[data-action="resume"] .btnBg { stroke: #ffd27a; }
   #stopButton .btnBg { stroke: #8a4450; }
   #stopButton .btnIcon { fill: #ff8b96; stroke: #ff8b96; }
+  #stopButton:hover .btnBg { fill: #482329; stroke: #ff8b96; }
+
+  /* Speed control styles */
+  #speedControl {
+    outline: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .speedTrackBg {
+    fill: #141824;
+    stroke: #3c4556;
+    stroke-width: 0.8;
+  }
+  .speedTrackFill {
+    fill: #70efb6;
+    transition: width 0.12s ease-out, fill 0.2s ease-out;
+  }
+  .speedNotch {
+    fill: #4c566b;
+    stroke: #141824;
+    stroke-width: 0.8;
+    cursor: pointer;
+    transition: fill 0.2s, r 0.15s;
+    pointer-events: none;
+  }
+  .speedNotch.active {
+    fill: #70efb6;
+  }
+  #speedThumb {
+    cursor: pointer;
+    pointer-events: none;
+    transition: transform 0.14s cubic-bezier(0.2, 0.9, 0.3, 1);
+  }
+  #speedThumb.dragging {
+    transition: none;
+  }
+  #speedThumb .thumbGlow {
+    fill: #70efb6;
+    opacity: 0.28;
+    transition: fill 0.2s, opacity 0.2s, r 0.15s;
+  }
+  #speedThumb .thumbBody {
+    fill: #161c26;
+    stroke: #70efb6;
+    stroke-width: 1.8;
+    transition: stroke 0.2s;
+  }
+  #speedThumb .thumbDot {
+    fill: #70efb6;
+    transition: fill 0.2s;
+  }
+  #speedControl:hover #speedThumb .thumbGlow {
+    opacity: 0.55;
+    r: 8.5;
+  }
+  #speedControl:focus-visible #speedThumb .thumbBody {
+    stroke: #ffd27a;
+    stroke-width: 2.2;
+  }
+  #speedControl[data-level="1"] .speedTrackFill,
+  #speedControl[data-level="1"] .speedNotch.active,
+  #speedControl[data-level="1"] #speedThumb .thumbBody,
+  #speedControl[data-level="1"] #speedThumb .thumbDot { stroke: #60cdff; fill: #60cdff; }
+  #speedControl[data-level="1"] #speedThumb .thumbGlow { fill: #60cdff; }
+  #speedControl[data-level="1"] #speedThumb .thumbBody { fill: #161c26; }
+
+  #speedControl[data-level="2"] .speedTrackFill,
+  #speedControl[data-level="2"] .speedNotch.active,
+  #speedControl[data-level="2"] #speedThumb .thumbBody,
+  #speedControl[data-level="2"] #speedThumb .thumbDot { stroke: #70efb6; fill: #70efb6; }
+  #speedControl[data-level="2"] #speedThumb .thumbGlow { fill: #70efb6; }
+  #speedControl[data-level="2"] #speedThumb .thumbBody { fill: #161c26; }
+
+  #speedControl[data-level="3"] .speedTrackFill,
+  #speedControl[data-level="3"] .speedNotch.active,
+  #speedControl[data-level="3"] #speedThumb .thumbBody,
+  #speedControl[data-level="3"] #speedThumb .thumbDot { stroke: #ffd27a; fill: #ffd27a; }
+  #speedControl[data-level="3"] #speedThumb .thumbGlow { fill: #ffd27a; }
+  #speedControl[data-level="3"] #speedThumb .thumbBody { fill: #161c26; }
+
+  #speedControl[data-level="4"] .speedTrackFill,
+  #speedControl[data-level="4"] .speedNotch.active,
+  #speedControl[data-level="4"] #speedThumb .thumbBody,
+  #speedControl[data-level="4"] #speedThumb .thumbDot { stroke: #ff8b96; fill: #ff8b96; }
+  #speedControl[data-level="4"] #speedThumb .thumbGlow { fill: #ff8b96; }
+  #speedControl[data-level="4"] #speedThumb .thumbBody { fill: #161c26; }
+
+  #speedValueText {
+    font: 700 8.5px "Segoe UI", system-ui, sans-serif;
+    letter-spacing: 0.3px;
+    transition: fill 0.2s ease-out;
+    pointer-events: none;
+  }
+  #speedTitle {
+    font: 700 7px "Segoe UI", system-ui, sans-serif;
+    fill: #828b9c;
+    letter-spacing: 0.6px;
+    pointer-events: none;
+  }
+  .speedTickText {
+    font: 700 6px "Segoe UI", system-ui, sans-serif;
+    fill: #616b7e;
+    text-anchor: middle;
+    pointer-events: none;
+  }
   .lightToggle { cursor: pointer; }
   .lightToggle rect { fill: #121720; stroke: #828b9c; stroke-width: 1.2; }
   .lightToggle:hover rect { fill: #252c3a; }
@@ -413,6 +518,21 @@
             <circle cx="154" cy="80" r="2.7"/>
             <text id="statusText" x="163" y="83">Connecting</text>
           </g>
+          <!-- print controls moved to top lid next to status badge -->
+          <g id="pauseButton" class="controlButton" data-action="pause" transform="translate(112 80)" role="button" tabindex="0" aria-label="Pause print">
+            <title id="pauseButtonTitle">Pause print</title>
+            <circle class="btnBg" r="7.5"/>
+            <g class="pauseIcon">
+              <rect class="btnIcon" x="-3.2" y="-3.6" width="2.2" height="7.2" rx="0.8"/>
+              <rect class="btnIcon" x="1.0" y="-3.6" width="2.2" height="7.2" rx="0.8"/>
+            </g>
+            <path class="btnIcon resumeIcon" d="M-2.2 -3.6 L3.6 0 L-2.2 3.6 Z"/>
+          </g>
+          <g id="stopButton" class="controlButton" transform="translate(132 80)" role="button" tabindex="0" aria-label="Stop print">
+            <title>Stop print</title>
+            <circle class="btnBg" r="7.5"/>
+            <rect class="btnIcon" x="-3.0" y="-3.0" width="6.0" height="6.0" rx="1.2"/>
+          </g>
           <!-- inner bevel -->
           <rect x="60" y="74" width="180" height="144" rx="15" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
           <!-- side vents -->
@@ -499,20 +619,39 @@
           </g>
 
           <text id="screenPercent" x="150" y="169">--%</text>
-          <!-- print controls on the front panel, under the screen -->
-          <g id="pauseButton" class="controlButton" data-action="pause" transform="translate(124 209)" role="button" tabindex="0" aria-label="Pause print">
-            <title id="pauseButtonTitle">Pause print</title>
-            <circle class="btnBg" r="9"/>
-            <g class="pauseIcon">
-              <rect class="btnIcon" x="-3.6" y="-4.2" width="2.5" height="8.4" rx="0.9"/>
-              <rect class="btnIcon" x="1.1" y="-4.2" width="2.5" height="8.4" rx="0.9"/>
+          <!-- print speed slider on front panel under screen -->
+          <g id="speedControl" role="slider" tabindex="0" aria-label="Print speed" aria-valuemin="1" aria-valuemax="4" aria-valuenow="2" aria-valuetext="Standard (100%)" data-level="2">
+            <text id="speedTitle" x="84" y="204">SPEED</text>
+            <text id="speedValueText" x="216" y="204" text-anchor="end" fill="#70efb6">STANDARD · 100%</text>
+
+            <rect class="speedTrackBg" x="84" y="209" width="132" height="3" rx="1.5"/>
+            <rect id="speedTrackFill" class="speedTrackFill" x="84" y="209" width="45" height="3" rx="1.5"/>
+
+            <circle class="speedNotch" data-level="1" cx="86" cy="210.5" r="2.2">
+              <title>Silent (50%)</title>
+            </circle>
+            <circle class="speedNotch active" data-level="2" cx="129" cy="210.5" r="2.2">
+              <title>Standard (100%)</title>
+            </circle>
+            <circle class="speedNotch" data-level="3" cx="171" cy="210.5" r="2.2">
+              <title>Sport (124%)</title>
+            </circle>
+            <circle class="speedNotch" data-level="4" cx="214" cy="210.5" r="2.2">
+              <title>Ludicrous (166%)</title>
+            </circle>
+
+            <text class="speedTickText" x="86" y="219">50%</text>
+            <text class="speedTickText" x="129" y="219">100%</text>
+            <text class="speedTickText" x="171" y="219">124%</text>
+            <text class="speedTickText" x="214" y="219">166%</text>
+
+            <g id="speedThumb" transform="translate(129 210.5)">
+              <circle class="thumbGlow" r="7"/>
+              <circle class="thumbBody" r="4.6"/>
+              <circle class="thumbDot" r="1.8"/>
             </g>
-            <path class="btnIcon resumeIcon" d="M-2.4 -4.4 L4.2 0 L-2.4 4.4 Z"/>
-          </g>
-          <g id="stopButton" class="controlButton" transform="translate(176 209)" role="button" tabindex="0" aria-label="Stop print">
-            <title>Stop print</title>
-            <circle class="btnBg" r="9"/>
-            <rect class="btnIcon" x="-3.6" y="-3.6" width="7.2" height="7.2" rx="1.4"/>
+
+            <rect id="speedHitArea" x="78" y="197" width="144" height="24" fill="transparent" style="cursor: pointer;"/>
           </g>
         </g>
         <g id="layerBadge" aria-label="Layer progress">
@@ -758,6 +897,20 @@
     const hasWifiLevel = Number.isFinite(wifiLevel) && wifiLevel >= 1 && wifiLevel <= 3;
     wifiIndicator.classList.toggle('visible', hasWifiLevel);
     if (hasWifiLevel) wifiIndicator.dataset.level = String(Math.round(wifiLevel));
+
+    if (!isSpeedDragging && s && s.has_data) {
+      let reportedLvl = null;
+      if (s.spd_lvl != null) {
+        reportedLvl = Number(s.spd_lvl);
+      } else if (s.spd_mag != null) {
+        const mag = Number(s.spd_mag);
+        reportedLvl = mag <= 70 ? 1 : mag <= 110 ? 2 : mag <= 145 ? 3 : 4;
+      }
+      if (reportedLvl && reportedLvl >= 1 && reportedLvl <= 4 && reportedLvl !== currentSpeedLevel) {
+        currentSpeedLevel = reportedLvl;
+        updateSpeedUI(reportedLvl);
+      }
+    }
   }
 
   const pauseButton = document.getElementById('pauseButton');
@@ -789,12 +942,124 @@
     else if (currentMood === 'pause') requestPrintControl('resume', 'Resume the current print?');
   });
   bindControl(stopButton, () => requestPrintControl('stop', 'Stop and cancel the current print? This cannot be undone.'));
+  pauseButton.addEventListener('mousedown', (e) => e.stopPropagation());
+  stopButton.addEventListener('mousedown', (e) => e.stopPropagation());
   bindControl(lightButton, async () => {
     const next = !chamberLightOn;
     const result = await window.pywebview?.api?.control_bambu?.('chamber_light', next ? 'on' : 'off');
     if (!result || result.ok) { chamberLightOn = next; renderLightButton(); }
   });
   renderLightButton();
+
+  const SPEED_LEVELS = [
+    { level: 1, name: 'SILENT', pct: 50, color: '#60cdff', x: 86 },
+    { level: 2, name: 'STANDARD', pct: 100, color: '#70efb6', x: 129 },
+    { level: 3, name: 'SPORT', pct: 124, color: '#ffd27a', x: 171 },
+    { level: 4, name: 'LUDICROUS', pct: 166, color: '#ff8b96', x: 214 },
+  ];
+  const speedControl = document.getElementById('speedControl');
+  const speedValueText = document.getElementById('speedValueText');
+  const speedTrackFill = document.getElementById('speedTrackFill');
+  const speedThumb = document.getElementById('speedThumb');
+  const speedHitArea = document.getElementById('speedHitArea');
+  const speedNotches = Array.from(document.querySelectorAll('.speedNotch'));
+  let currentSpeedLevel = 2;
+  let isSpeedDragging = false;
+
+  function updateSpeedUI(level, visualX = null) {
+    const config = SPEED_LEVELS.find((s) => s.level === level) || SPEED_LEVELS[1];
+    const targetX = visualX != null ? visualX : config.x;
+    speedControl.dataset.level = String(config.level);
+    speedControl.setAttribute('aria-valuenow', String(config.level));
+    speedControl.setAttribute('aria-valuetext', `${config.name} (${config.pct}%)`);
+    speedThumb.setAttribute('transform', `translate(${targetX} 210.5)`);
+    const fillWidth = Math.max(0, Math.min(132, targetX - 84));
+    speedTrackFill.setAttribute('width', String(fillWidth));
+    speedTrackFill.style.fill = config.color;
+    speedValueText.textContent = `${config.name} · ${config.pct}%`;
+    speedValueText.setAttribute('fill', config.color);
+    speedNotches.forEach((notch) => {
+      const notchLevel = Number(notch.dataset.level);
+      notch.classList.toggle('active', notchLevel <= config.level);
+    });
+  }
+
+  function setSpeedLevel(level, sendToPrinter = true) {
+    const clamped = Math.max(1, Math.min(4, Math.round(Number(level) || 2)));
+    currentSpeedLevel = clamped;
+    updateSpeedUI(clamped);
+    if (sendToPrinter && window.pywebview?.api?.control_bambu) {
+      window.pywebview.api.control_bambu('print_speed', String(clamped)).catch(() => {
+        console.error('Failed to send print_speed command');
+      });
+    }
+  }
+
+  function getSvgX(clientX) {
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = 0;
+    const transformed = pt.matrixTransform(svg.getScreenCTM().inverse());
+    return Math.max(86, Math.min(214, transformed.x));
+  }
+
+  function getClosestLevel(x) {
+    let closest = SPEED_LEVELS[0];
+    let minDiff = Infinity;
+    for (const s of SPEED_LEVELS) {
+      const diff = Math.abs(x - s.x);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = s;
+      }
+    }
+    return closest.level;
+  }
+
+  speedHitArea.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    isSpeedDragging = true;
+    speedThumb.classList.add('dragging');
+    const x = getSvgX(e.clientX);
+    const lvl = getClosestLevel(x);
+    updateSpeedUI(lvl, x);
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isSpeedDragging) return;
+    e.stopPropagation();
+    const x = getSvgX(e.clientX);
+    const lvl = getClosestLevel(x);
+    updateSpeedUI(lvl, x);
+  });
+
+  window.addEventListener('mouseup', (e) => {
+    if (!isSpeedDragging) return;
+    isSpeedDragging = false;
+    speedThumb.classList.remove('dragging');
+    const x = getSvgX(e.clientX);
+    const finalLvl = getClosestLevel(x);
+    setSpeedLevel(finalLvl, true);
+  });
+
+  speedControl.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
+      e.preventDefault(); e.stopPropagation();
+      setSpeedLevel(currentSpeedLevel - 1, true);
+    } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
+      e.preventDefault(); e.stopPropagation();
+      setSpeedLevel(currentSpeedLevel + 1, true);
+    } else if (e.key === 'Home') {
+      e.preventDefault(); e.stopPropagation();
+      setSpeedLevel(1, true);
+    } else if (e.key === 'End') {
+      e.preventDefault(); e.stopPropagation();
+      setSpeedLevel(4, true);
+    }
+  });
+
+  updateSpeedUI(currentSpeedLevel);
 
   async function pollCamera() {
     if (!cameraMonitorOpen || cameraPollInFlight || !window.pywebview?.api?.get_bambu_camera_snapshot) return;
@@ -965,7 +1230,8 @@
     } else if (!(e.target instanceof Node) || (!cameraToggle.contains(e.target)
       && !document.getElementById('lightButton').contains(e.target)
       && !document.getElementById('pauseButton').contains(e.target)
-      && !document.getElementById('stopButton').contains(e.target))) {
+      && !document.getElementById('stopButton').contains(e.target)
+      && !document.getElementById('speedControl').contains(e.target))) {
       handlePetClick();
     }
     dragStartX = undefined;

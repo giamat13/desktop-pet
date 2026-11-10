@@ -705,11 +705,20 @@ def _test_bambu_status():
         "configured", "connected", "error", "has_data", "mood", "percent",
         "elapsed_minutes", "remaining_minutes", "layer_num",
         "nozzle_temp", "nozzle_target", "bed_temp", "bed_target", "warming", "total_layers", "wifi_level",
+        "spd_lvl", "spd_mag",
     }, s
 
     for signal, expected in (("-55dBm", 3), ("-68dBm", 2), ("-82dBm", 1), ("unavailable", None)):
         summary = pet_app.bambu_summary(True, {"wifi_signal": signal}, True, "")
         assert summary["wifi_level"] == expected, (signal, summary)
+
+    # Print speed parsing and mapping
+    s_spd = pet_app.bambu_summary(True, {"spd_lvl": 3, "spd_mag": 124}, True, "")
+    assert s_spd["spd_lvl"] == 3 and s_spd["spd_mag"] == 124, s_spd
+    s_spd_lvl_only = pet_app.bambu_summary(True, {"spd_lvl": 1}, True, "")
+    assert s_spd_lvl_only["spd_lvl"] == 1 and s_spd_lvl_only["spd_mag"] == 50, s_spd_lvl_only
+    s_spd_mag_only = pet_app.bambu_summary(True, {"spd_mag": 166}, True, "")
+    assert s_spd_mag_only["spd_lvl"] == 4 and s_spd_mag_only["spd_mag"] == 166, s_spd_mag_only
 
     s = pet_app.bambu_summary(True, {
         "gcode_state": "PREPARE", "nozzle_temper": 45, "nozzle_target_temper": 220,
@@ -737,6 +746,47 @@ def _test_bambu_status():
 
     assert pet_app.Api(1080, lambda: None, "claude").get_bambu_status() is None, \
         "get_bambu_status() must stay gated to the bambu pet"
+
+    # send_bambu_command testing with speed control
+    res_bad = pet_app.send_bambu_command("print_speed", "99")
+    assert res_bad["ok"] is False, "invalid speed command should fail"
+
+    class FakeMqttClient:
+        def __init__(self):
+            self.published = []
+        def publish(self, topic, payload, qos=1):
+            self.published.append((topic, json.loads(payload), qos))
+            class Info: rc = 0
+            return Info()
+
+    fake_client = FakeMqttClient()
+    with pet_app._bambu_lock:
+        old_client = pet_app._bambu_client
+        pet_app._bambu_client = fake_client
+        old_cfg_path = pet_app.CONFIG_PATH
+    try:
+        tmp_cfg = tempfile.mkdtemp(prefix="bambu_cmd_test_")
+        pet_app.CONFIG_PATH = os.path.join(tmp_cfg, "config.json")
+        pet_app.update_config("bambu", mode="local", ip="127.0.0.1", code="12345678", serial="01P00A123456789")
+        res = pet_app.send_bambu_command("print_speed", "3")
+        assert res["ok"] is True, res
+        assert len(fake_client.published) == 1
+        topic, payload, _ = fake_client.published[0]
+        assert topic == "device/01P00A123456789/request"
+        assert payload["print"]["command"] == "print_speed"
+        assert payload["print"]["param"] == "3"
+        assert pet_app._bambu_data["spd_lvl"] == 3
+        assert pet_app._bambu_data["spd_mag"] == 124
+
+        # named speed: Sport -> 3, Silent -> 1
+        fake_client.published.clear()
+        res_sport = pet_app.send_bambu_command("print_speed", "sport")
+        assert res_sport["ok"] is True
+        assert fake_client.published[0][1]["print"]["param"] == "3"
+    finally:
+        with pet_app._bambu_lock:
+            pet_app._bambu_client = old_client
+            pet_app.CONFIG_PATH = old_cfg_path
 
 
 def _test_bambu_camera_protocol():
