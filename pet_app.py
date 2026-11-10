@@ -2184,14 +2184,13 @@ def send_bambu_command(command, value=None):
         else:
             return {"ok": False, "error": "Unsupported printer command"}
         info = client.publish(topic, json.dumps(payload), qos=1)
-        ok = getattr(info, "rc", 0) == 0
-        if ok and command == "print_speed" and speed_level is not None:
-            try:
-                lvl = int(speed_level)
-                _bambu_data["spd_lvl"] = lvl
-                _bambu_data["spd_mag"] = {1: 50, 2: 100, 3: 124, 4: 166}.get(lvl, 100)
-            except Exception:
-                pass
+        rc = getattr(info, "rc", None)
+        ok = rc == 0
+        # rc only says the message left this PC. A printer on newer firmware
+        # can still refuse an unsigned print.* command, so nothing is written
+        # into _bambu_data here: the speed shown always comes from the
+        # printer's own spd_lvl report.
+        log("bambu command", command, value, "rc:", rc)
     return {"ok": ok}
 
 

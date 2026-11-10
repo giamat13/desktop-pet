@@ -87,12 +87,6 @@
   .controlButton:hover .btnBg { fill: #354154; stroke: #9ba7be; }
   .controlButton:focus-visible .btnBg { stroke: #ffc45c; }
   .controlButton .resumeIcon { display: none; }
-  #pauseButton[data-action="resume"] .pauseIcon { display: none; }
-  #pauseButton[data-action="resume"] .resumeIcon { display: inline; }
-  #pauseButton[data-action="resume"] .btnBg { stroke: #ffd27a; }
-  #stopButton .btnBg { stroke: #8a4450; }
-  #stopButton .btnIcon { fill: #ff8b96; stroke: #ff8b96; }
-  #stopButton:hover .btnBg { fill: #482329; stroke: #ff8b96; }
 
   /* Speed control styles */
   #speedControl {
@@ -519,20 +513,6 @@
             <text id="statusText" x="163" y="83">Connecting</text>
           </g>
           <!-- print controls moved to top lid next to status badge -->
-          <g id="pauseButton" class="controlButton" data-action="pause" transform="translate(112 80)" role="button" tabindex="0" aria-label="Pause print">
-            <title id="pauseButtonTitle">Pause print</title>
-            <circle class="btnBg" r="7.5"/>
-            <g class="pauseIcon">
-              <rect class="btnIcon" x="-3.2" y="-3.6" width="2.2" height="7.2" rx="0.8"/>
-              <rect class="btnIcon" x="1.0" y="-3.6" width="2.2" height="7.2" rx="0.8"/>
-            </g>
-            <path class="btnIcon resumeIcon" d="M-2.2 -3.6 L3.6 0 L-2.2 3.6 Z"/>
-          </g>
-          <g id="stopButton" class="controlButton" transform="translate(132 80)" role="button" tabindex="0" aria-label="Stop print">
-            <title>Stop print</title>
-            <circle class="btnBg" r="7.5"/>
-            <rect class="btnIcon" x="-3.0" y="-3.0" width="6.0" height="6.0" rx="1.2"/>
-          </g>
           <!-- inner bevel -->
           <rect x="60" y="74" width="180" height="144" rx="15" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
           <!-- side vents -->
@@ -620,7 +600,7 @@
 
           <text id="screenPercent" x="150" y="169">--%</text>
           <!-- print speed slider on front panel under screen -->
-          <g id="speedControl" role="slider" tabindex="0" aria-label="Print speed" aria-valuemin="1" aria-valuemax="4" aria-valuenow="2" aria-valuetext="Standard (100%)" data-level="2">
+          <g id="speedControl" role="img" aria-label="Print speed, read only" aria-valuetext="Standard (100%)" data-level="2">
             <text id="speedTitle" x="84" y="204">SPEED</text>
             <text id="speedValueText" x="216" y="204" text-anchor="end" fill="#70efb6">STANDARD · 100%</text>
 
@@ -651,7 +631,6 @@
               <circle class="thumbDot" r="1.8"/>
             </g>
 
-            <rect id="speedHitArea" x="78" y="197" width="144" height="24" fill="transparent" style="cursor: pointer;"/>
           </g>
         </g>
         <g id="layerBadge" aria-label="Layer progress">
@@ -782,7 +761,6 @@
     statusBadge.dataset.mood = mood;
     currentMood = mood;
     svg.classList.toggle('sleeping', !!(s && s.sleeping));
-    setPauseAction(mood === 'pause');
     svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
     statusText.textContent = displayValue(label);
     let expression = 'neutral';
@@ -898,7 +876,7 @@
     wifiIndicator.classList.toggle('visible', hasWifiLevel);
     if (hasWifiLevel) wifiIndicator.dataset.level = String(Math.round(wifiLevel));
 
-    if (!isSpeedDragging && s && s.has_data) {
+    if (s && s.has_data) {
       let reportedLvl = null;
       if (s.spd_lvl != null) {
         reportedLvl = Number(s.spd_lvl);
@@ -913,15 +891,6 @@
     }
   }
 
-  const pauseButton = document.getElementById('pauseButton');
-  const pauseButtonTitle = document.getElementById('pauseButtonTitle');
-  function setPauseAction(resume) {
-    const label = resume ? 'Resume print' : 'Pause print';
-    pauseButton.dataset.action = resume ? 'resume' : 'pause';
-    pauseButton.setAttribute('aria-label', label);
-    pauseButtonTitle.textContent = label;
-  }
-  const stopButton = document.getElementById('stopButton');
   const lightButton = document.getElementById('lightButton');
   const lightButtonTitle = document.getElementById('lightButtonTitle');
   function renderLightButton() {
@@ -933,17 +902,6 @@
     el.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); fn(); } });
   }
-  function requestPrintControl(command, message) {
-    if (!['run', 'pause'].includes(currentMood) || !window.confirm(message)) return;
-    window.pywebview?.api?.control_bambu?.(command);
-  }
-  bindControl(pauseButton, () => {
-    if (currentMood === 'run') requestPrintControl('pause', 'Pause the current print?');
-    else if (currentMood === 'pause') requestPrintControl('resume', 'Resume the current print?');
-  });
-  bindControl(stopButton, () => requestPrintControl('stop', 'Stop and cancel the current print? This cannot be undone.'));
-  pauseButton.addEventListener('mousedown', (e) => e.stopPropagation());
-  stopButton.addEventListener('mousedown', (e) => e.stopPropagation());
   bindControl(lightButton, async () => {
     const next = !chamberLightOn;
     const result = await window.pywebview?.api?.control_bambu?.('chamber_light', next ? 'on' : 'off');
@@ -961,10 +919,8 @@
   const speedValueText = document.getElementById('speedValueText');
   const speedTrackFill = document.getElementById('speedTrackFill');
   const speedThumb = document.getElementById('speedThumb');
-  const speedHitArea = document.getElementById('speedHitArea');
   const speedNotches = Array.from(document.querySelectorAll('.speedNotch'));
   let currentSpeedLevel = 2;
-  let isSpeedDragging = false;
 
   function updateSpeedUI(level, visualX = null) {
     const config = SPEED_LEVELS.find((s) => s.level === level) || SPEED_LEVELS[1];
@@ -984,80 +940,6 @@
     });
   }
 
-  function setSpeedLevel(level, sendToPrinter = true) {
-    const clamped = Math.max(1, Math.min(4, Math.round(Number(level) || 2)));
-    currentSpeedLevel = clamped;
-    updateSpeedUI(clamped);
-    if (sendToPrinter && window.pywebview?.api?.control_bambu) {
-      window.pywebview.api.control_bambu('print_speed', String(clamped)).catch(() => {
-        console.error('Failed to send print_speed command');
-      });
-    }
-  }
-
-  function getSvgX(clientX) {
-    const pt = svg.createSVGPoint();
-    pt.x = clientX;
-    pt.y = 0;
-    const transformed = pt.matrixTransform(svg.getScreenCTM().inverse());
-    return Math.max(86, Math.min(214, transformed.x));
-  }
-
-  function getClosestLevel(x) {
-    let closest = SPEED_LEVELS[0];
-    let minDiff = Infinity;
-    for (const s of SPEED_LEVELS) {
-      const diff = Math.abs(x - s.x);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closest = s;
-      }
-    }
-    return closest.level;
-  }
-
-  speedHitArea.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    isSpeedDragging = true;
-    speedThumb.classList.add('dragging');
-    const x = getSvgX(e.clientX);
-    const lvl = getClosestLevel(x);
-    updateSpeedUI(lvl, x);
-  });
-
-  window.addEventListener('mousemove', (e) => {
-    if (!isSpeedDragging) return;
-    e.stopPropagation();
-    const x = getSvgX(e.clientX);
-    const lvl = getClosestLevel(x);
-    updateSpeedUI(lvl, x);
-  });
-
-  window.addEventListener('mouseup', (e) => {
-    if (!isSpeedDragging) return;
-    isSpeedDragging = false;
-    speedThumb.classList.remove('dragging');
-    const x = getSvgX(e.clientX);
-    const finalLvl = getClosestLevel(x);
-    setSpeedLevel(finalLvl, true);
-  });
-
-  speedControl.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
-      e.preventDefault(); e.stopPropagation();
-      setSpeedLevel(currentSpeedLevel - 1, true);
-    } else if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
-      e.preventDefault(); e.stopPropagation();
-      setSpeedLevel(currentSpeedLevel + 1, true);
-    } else if (e.key === 'Home') {
-      e.preventDefault(); e.stopPropagation();
-      setSpeedLevel(1, true);
-    } else if (e.key === 'End') {
-      e.preventDefault(); e.stopPropagation();
-      setSpeedLevel(4, true);
-    }
-  });
 
   updateSpeedUI(currentSpeedLevel);
 
@@ -1229,8 +1111,6 @@
       }
     } else if (!(e.target instanceof Node) || (!cameraToggle.contains(e.target)
       && !document.getElementById('lightButton').contains(e.target)
-      && !document.getElementById('pauseButton').contains(e.target)
-      && !document.getElementById('stopButton').contains(e.target)
       && !document.getElementById('speedControl').contains(e.target))) {
       handlePetClick();
     }
