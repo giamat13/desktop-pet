@@ -82,9 +82,16 @@
     fill: #70efb6;
   }
   .controlButton { cursor: pointer; }
-  .controlButton rect { fill: #202733; stroke: #738096; stroke-width: 1; }
-  .controlButton text { fill: #e7ebf2; font: 700 6px "Segoe UI", sans-serif; text-anchor: middle; pointer-events: none; }
-  .controlButton:hover rect { fill: #354154; }
+  .controlButton .btnBg { fill: #202733; stroke: #738096; stroke-width: 1; }
+  .controlButton .btnIcon { fill: #e7ebf2; stroke: #e7ebf2; stroke-width: 0.8; stroke-linejoin: round; pointer-events: none; }
+  .controlButton:hover .btnBg { fill: #354154; }
+  .controlButton:focus-visible .btnBg { stroke: #ffc45c; }
+  .controlButton .resumeIcon { display: none; }
+  #pauseButton[data-action="resume"] .pauseIcon { display: none; }
+  #pauseButton[data-action="resume"] .resumeIcon { display: inline; }
+  #pauseButton[data-action="resume"] .btnBg { stroke: #ffd27a; }
+  #stopButton .btnBg { stroke: #8a4450; }
+  #stopButton .btnIcon { fill: #ff8b96; stroke: #ff8b96; }
   .lightToggle { cursor: pointer; }
   .lightToggle rect { fill: #121720; stroke: #828b9c; stroke-width: 1.2; }
   .lightToggle:hover rect { fill: #252c3a; }
@@ -492,12 +499,21 @@
           </g>
 
           <text id="screenPercent" x="150" y="169">--%</text>
-        </g>
-        <g id="pauseButton" class="controlButton" role="button" tabindex="0" aria-label="Pause or resume print">
-          <rect x="80" y="228" width="62" height="19" rx="7"/><text id="pauseButtonText" x="111" y="240">PAUSE</text>
-        </g>
-        <g id="stopButton" class="controlButton" role="button" tabindex="0" aria-label="Stop print">
-          <rect x="158" y="228" width="62" height="19" rx="7"/><text x="189" y="240">STOP</text>
+          <!-- print controls on the front panel, under the screen -->
+          <g id="pauseButton" class="controlButton" data-action="pause" transform="translate(124 209)" role="button" tabindex="0" aria-label="Pause print">
+            <title id="pauseButtonTitle">Pause print</title>
+            <circle class="btnBg" r="9"/>
+            <g class="pauseIcon">
+              <rect class="btnIcon" x="-3.6" y="-4.2" width="2.5" height="8.4" rx="0.9"/>
+              <rect class="btnIcon" x="1.1" y="-4.2" width="2.5" height="8.4" rx="0.9"/>
+            </g>
+            <path class="btnIcon resumeIcon" d="M-2.4 -4.4 L4.2 0 L-2.4 4.4 Z"/>
+          </g>
+          <g id="stopButton" class="controlButton" transform="translate(176 209)" role="button" tabindex="0" aria-label="Stop print">
+            <title>Stop print</title>
+            <circle class="btnBg" r="9"/>
+            <rect class="btnIcon" x="-3.6" y="-3.6" width="7.2" height="7.2" rx="1.4"/>
+          </g>
         </g>
         <g id="layerBadge" aria-label="Layer progress">
           <rect x="68" y="111" width="12" height="94" rx="6" fill="#11151d" stroke="#705632" stroke-width="1"/>
@@ -627,7 +643,7 @@
     statusBadge.dataset.mood = mood;
     currentMood = mood;
     svg.classList.toggle('sleeping', !!(s && s.sleeping));
-    pauseButtonText.textContent = mood === 'pause' ? 'RESUME' : 'PAUSE';
+    setPauseAction(mood === 'pause');
     svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
     statusText.textContent = displayValue(label);
     let expression = 'neutral';
@@ -745,7 +761,13 @@
   }
 
   const pauseButton = document.getElementById('pauseButton');
-  const pauseButtonText = document.getElementById('pauseButtonText');
+  const pauseButtonTitle = document.getElementById('pauseButtonTitle');
+  function setPauseAction(resume) {
+    const label = resume ? 'Resume print' : 'Pause print';
+    pauseButton.dataset.action = resume ? 'resume' : 'pause';
+    pauseButton.setAttribute('aria-label', label);
+    pauseButtonTitle.textContent = label;
+  }
   const stopButton = document.getElementById('stopButton');
   const lightButton = document.getElementById('lightButton');
   const lightButtonTitle = document.getElementById('lightButtonTitle');
@@ -758,7 +780,6 @@
     el.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); fn(); } });
   }
-  pauseButtonText.textContent = 'PAUSE';
   function requestPrintControl(command, message) {
     if (!['run', 'pause'].includes(currentMood) || !window.confirm(message)) return;
     window.pywebview?.api?.control_bambu?.(command);
