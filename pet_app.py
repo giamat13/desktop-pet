@@ -2109,6 +2109,7 @@ def _bambu_spool(tray, slot):
         "color": None,
         "remain_pct": None,
         "grams": None,
+        "active": False,
     }
     color = str(tray.get("tray_color") or "").strip()
     if len(color) >= 6 and all(c in _HEX_DIGITS for c in color[:6]):
@@ -2130,23 +2131,60 @@ def _bambu_spool(tray, slot):
     return spool
 
 
+def _bambu_int(value):
+    """int(value) for the printer's numeric-ish strings, else None. Pure."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _bambu_tray_id(unit, unit_index, tray, tray_index):
+    """
+    The number the printer uses for this tray in `tray_now`: unit id * 4 +
+    tray id for a regular AMS, and the unit id itself for a single-slot AMS HT
+    (ids 128 and up). Falls back to list position when ids are missing. Pure.
+    """
+    unit_id = _bambu_int(unit.get("id"))
+    if unit_id is None:
+        unit_id = unit_index
+    if unit_id >= 128:
+        return unit_id
+    tray_id = _bambu_int(tray.get("id"))
+    if tray_id is None:
+        tray_id = tray_index
+    return unit_id * 4 + tray_id
+
+
 def bambu_filaments(data):
     """
     Every AMS slot plus the external spool, in order, from the `ams` block of
     a print report. Pure; a malformed block just yields fewer entries.
+
+    The spool the printer is feeding from right now is flagged `active`, from
+    `ams.tray_now` ("254" is the external spool, "255" is none).
     """
     spools = []
     ams = data.get("ams")
     units = ams.get("ams") if isinstance(ams, dict) else None
+    tray_now = _bambu_int(ams.get("tray_now")) if isinstance(ams, dict) else None
     for unit_index, unit in enumerate(units if isinstance(units, list) else []):
-        trays = unit.get("tray") if isinstance(unit, dict) else None
+        if not isinstance(unit, dict):
+            continue
+        trays = unit.get("tray")
         letter = chr(ord("A") + min(max(unit_index, 0), 25))
         for tray_index, tray in enumerate(trays if isinstance(trays, list) else []):
             if isinstance(tray, dict):
-                spools.append(_bambu_spool(tray, f"{letter}{tray_index + 1}"))
+                spool = _bambu_spool(tray, f"{letter}{tray_index + 1}")
+                spool["active"] = (
+                    tray_now is not None and not spool["empty"]
+                    and _bambu_tray_id(unit, unit_index, tray, tray_index) == tray_now)
+                spools.append(spool)
     external = data.get("vt_tray")
     if isinstance(external, dict):
-        spools.append(_bambu_spool(external, "EXT"))
+        spool = _bambu_spool(external, "EXT")
+        spool["active"] = tray_now == 254 and not spool["empty"]
+        spools.append(spool)
     return spools
 
 

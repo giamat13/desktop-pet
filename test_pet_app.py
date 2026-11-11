@@ -815,7 +815,7 @@ def _test_bambu_filaments():
 
     a1, a2, a3, a4, ext = spools
     assert a1 == {"slot": "A1", "empty": False, "name": "PLA Basic", "color": "#FF0000",
-                  "remain_pct": 62, "grams": 620}, a1
+                  "remain_pct": 62, "grams": 620, "active": False}, a1
     assert a2["empty"] is True and a2["name"] == "", a2
     assert a3["color"] is None, "a colour that is not hex must be dropped, not shown"
     assert a3["remain_pct"] is None and a3["grams"] is None, \
@@ -824,6 +824,27 @@ def _test_bambu_filaments():
     assert a4["color"] == "#00AE42" and a4["remain_pct"] == 25 and a4["grams"] == 200, a4
     assert ext["name"] == "TPU" and ext["color"] == "#FFFFFF", ext
     assert ext["remain_pct"] is None, "external spool with no tag reads as unknown"
+
+    # The slot the printer is feeding from is flagged from ams.tray_now.
+    def active_slots(tray_now, report=ams_report):
+        r = json.loads(json.dumps(report))
+        if tray_now is not None:
+            r["ams"]["tray_now"] = tray_now
+        return [s["slot"] for s in pet_app.bambu_filaments(r) if s["active"]]
+    assert active_slots(None) == [], "no tray_now: nothing highlighted"
+    assert active_slots("0") == ["A1"] and active_slots("3") == ["A4"]
+    assert active_slots(3) == ["A4"], "tray_now as an int works too"
+    assert active_slots("254") == ["EXT"], "254 is the external spool"
+    assert active_slots("255") == [], "255 means no tray selected"
+    assert active_slots("1") == [], "an empty slot is never highlighted"
+    assert active_slots("zz") == [] and active_slots("") == []
+    two_units = {"ams": {"tray_now": "5", "ams": [
+        {"id": "0", "tray": [{"id": str(i), "tray_type": "PLA"} for i in range(4)]},
+        {"id": "1", "tray": [{"id": str(i), "tray_type": "PLA"} for i in range(4)]}]}}
+    assert [s["slot"] for s in pet_app.bambu_filaments(two_units) if s["active"]] == ["B2"]
+    ht = {"ams": {"tray_now": "128", "ams": [
+        {"id": "128", "tray": [{"id": "0", "tray_type": "PLA"}]}]}}
+    assert [s["slot"] for s in pet_app.bambu_filaments(ht) if s["active"]] == ["A1"]
 
     # No `tray_uuid` key at all: the printer did not say it is untagged, so
     # the reported remaining amount is used as-is.
