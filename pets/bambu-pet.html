@@ -1159,6 +1159,8 @@
     cameraToggle.setAttribute('aria-label', cameraMonitorOpen ? 'Close camera screen' : 'Open camera screen');
     cameraToggleText.textContent = cameraMonitorOpen ? 'CLOSE CAMERA' : 'OPEN CAMERA';
 
+    updateHitRegion();
+
     const api = window.pywebview?.api;
     if (api?.set_bambu_camera_stream) {
       api.set_bambu_camera_stream(cameraMonitorOpen).catch(() => {
@@ -1395,6 +1397,53 @@
     window.pywebview.api.get_bambu_status().then(render).catch(() => {});
   }
 
+  // ===== Dynamic hit box =====
+  // The window is sized for the largest the printer ever gets (camera screen
+  // open), but a transparent window still takes clicks over its empty pixels.
+  // So the page measures what is really drawn right now and asks Python to
+  // clip the window to that rectangle.
+  const HIT_PAD = 10;      // CSS px of slack around the drawn parts
+  const HIT_GRID = 4;      // device px; absorbs the idle sway so we don't spam Python
+  let lastHitBox = '';
+
+  function hitTargets() {
+    const ids = ['printer-hit', 'spoolRow', 'cameraMonitor', 'layerBadge', 'firstLayerIndicator',
+                 'wifiIndicator', 'elapsedBadge', 'remainingBadge', 'nozzleBadge', 'bedBadge',
+                 'statusBadge'];
+    const nodes = ids.map((id) => document.getElementById(id));
+    nodes.push(...svg.querySelectorAll('[id="cameraStand"]'));
+    return nodes.filter(Boolean);
+  }
+
+  function updateHitRegion() {
+    const api = window.pywebview && window.pywebview.api;
+    if (!api || !api.set_hit_region) return;
+
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const node of hitTargets()) {
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      l = Math.min(l, rect.left); t = Math.min(t, rect.top);
+      r = Math.max(r, rect.right); b = Math.max(b, rect.bottom);
+    }
+    if (!isFinite(l)) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const snap = (v, up) => (up ? Math.ceil(v / HIT_GRID) : Math.floor(v / HIT_GRID)) * HIT_GRID;
+    const box = [
+      snap((l - HIT_PAD) * dpr, false), snap((t - HIT_PAD) * dpr, false),
+      snap((r + HIT_PAD) * dpr, true), snap((b + HIT_PAD) * dpr, true),
+    ];
+    const key = box.join(',');
+    if (key === lastHitBox) return;
+    lastHitBox = key;
+    api.set_hit_region(...box).catch(() => { lastHitBox = ''; });
+  }
+
+  window.addEventListener('resize', updateHitRegion);
+
   window.addEventListener('pywebviewready', () => {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.get_pet_config) {
       window.pywebview.api.get_pet_config().then((cfg) => {
@@ -1407,6 +1456,8 @@
     setInterval(poll, 1500);
     setInterval(pollCameraConfiguration, 3000);
     setInterval(pollCamera, CAMERA_POLL_INTERVAL_MS);
+    updateHitRegion();
+    setInterval(updateHitRegion, 300);
   });
 
   function triggerJump() {

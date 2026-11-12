@@ -645,6 +645,7 @@ def _make_user32():
         "ShowWindowAsync": (ctypes.c_bool, [HWND, ctypes.c_int]),
         "SetWindowPos": (ctypes.c_bool, [HWND, HWND, ctypes.c_int, ctypes.c_int,
                                          ctypes.c_int, ctypes.c_int, ctypes.c_uint]),
+        "SetWindowRgn": (ctypes.c_int, [HWND, ctypes.c_void_p, ctypes.c_bool]),
         # Timeout-safe title read for read_vscode_dirty(): see that function's
         # docstring for why this is used instead of GetWindowText/GetWindowTextW.
         "SendMessageTimeoutW": (ctypes.c_size_t, [HWND, ctypes.c_uint, ctypes.c_size_t,
@@ -659,6 +660,52 @@ def _make_user32():
 
 
 USER32 = _make_user32()
+
+
+def clamp_hit_region(left, top, right, bottom, win_w, win_h):
+    """
+    Clip a requested clickable rectangle (window-relative device pixels) to
+    the window. Returns (l, t, r, b), or None when nothing usable is left -
+    the caller then keeps the whole window clickable instead of making the
+    pet impossible to grab.
+    """
+    try:
+        l, t, r, b = (int(round(float(v))) for v in (left, top, right, bottom))
+    except (TypeError, ValueError):
+        return None
+    l, t = max(0, l), max(0, t)
+    r, b = min(int(win_w), r), min(int(win_h), b)
+    if r - l < 8 or b - t < 8:
+        return None
+    return l, t, r, b
+
+
+def apply_hit_region(window, left, top, right, bottom):
+    """
+    Make only the given rectangle of a pet window receive the mouse.
+
+    A transparent WebView2 window still swallows clicks over its empty
+    pixels, so a pet whose window is bigger than what it currently draws
+    (the Bambu printer's camera screen is only there while it is open)
+    blocks the apps underneath. SetWindowRgn clips both painting and input
+    to the region; the system owns the region handle after the call.
+    """
+    if sys.platform != "win32" or USER32 is None:
+        return False
+    hwnd = window.native.Handle.ToInt32()
+    rect = _RECT()
+    if not USER32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return False
+    box = clamp_hit_region(left, top, right, bottom,
+                           rect.right - rect.left, rect.bottom - rect.top)
+    gdi32 = ctypes.WinDLL("gdi32")
+    gdi32.CreateRectRgn.restype = ctypes.c_void_p
+    gdi32.CreateRectRgn.argtypes = [ctypes.c_int] * 4
+    if box is None:
+        USER32.SetWindowRgn(hwnd, None, True)  # fall back to the full window
+        return False
+    USER32.SetWindowRgn(hwnd, gdi32.CreateRectRgn(*box), True)
+    return True
 
 
 def desktop_is_showing(ignore_hwnd=0):
@@ -2992,6 +3039,16 @@ class Api:
             sw.events.closed += _closed
         except Exception as exc:
             log("open_settings_window failed:", exc)
+
+    def set_hit_region(self, left, top, right, bottom):
+        """Bambu pet: only the drawn part of the window takes mouse input."""
+        if self._pet != "bambu" or not self._window:
+            return False
+        try:
+            return apply_hit_region(self._window, left, top, right, bottom)
+        except Exception as exc:
+            log("set_hit_region failed:", exc)
+            return False
 
     def start_drag(self):
         self.dragging = True
