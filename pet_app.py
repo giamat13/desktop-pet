@@ -2025,6 +2025,91 @@ def read_bambu_camera_snapshot(cfg, since_updated_at=None):
     }
 
 
+# ---- Printer alerts (Bambu pet, issue #5, step 1) ----
+# Two sources, both checked against the Bambu wiki and ha-bambulab:
+# - print_error: one int. Its 8 hex digits are the wiki code, e.g. 0300800F
+#   -> "0300-800F" (ha-bambulab issue 525: 117473286 is hex 07008006).
+# - hms: list of {"attr", "code"} ints. Each is 8 hex digits, so the code is
+#   attr then code, e.g. attr 0x03000100 + code 0x00010003 -> "0300-0100-0001-0003"
+#   (ha-bambulab issue 4 maps them the same way).
+# Only codes seen on the wiki (or quoted from a printer message) get a label.
+# Any other code is ignored: it is not shown as an error, so the pet never
+# turns red for a code it cannot name.
+# Keep labels within 12 characters: the status badge is 80px wide.
+BAMBU_PRINT_ERROR_LABELS = {
+    "0300800F": "Door open",     # 0300-800F: the door seems open, printing paused
+    "03008004": "Filament out",  # 0300-8004: filament ran out
+    "03008015": "Filament out",  # 0300-8015: the filament has run out
+    "03004006": "Nozzle clog",   # 0300-4006: the nozzle is clogged
+    "03008016": "Nozzle clog",   # 0300-8016: nozzle clogged up with filament
+    "07008011": "AMS out",       # 0700-8011 to 0703-8011: AMS filament ran out
+    "07018011": "AMS out",
+    "07028011": "AMS out",
+    "07038011": "AMS out",
+    "07FF8011": "AMS out",
+    "12008011": "AMS out",       # 1200-8011 to 1203-8011: AMS filament ran out
+    "12018011": "AMS out",
+    "12028011": "AMS out",
+    "12038011": "AMS out",
+    "12FF8011": "AMS out",
+}
+BAMBU_HMS_LABELS = {
+    "0300010000010003": "Bed temp",    # HMS 0300-0100-0001-0003: heatbed temperature abnormal
+    "03000D0000010003": "Plate off",   # HMS 0300-0D00-0001-0003: build plate not placed properly
+    "0300030000010001": "Hotend fan",  # HMS 0300-0300-0001-0001: hotend fan slow or stopped
+}
+# Alert label -> the pet's animation for it (bambu-pet.html, #fxLayer).
+BAMBU_ALERT_VISUALS = {
+    "Door open": "door",
+    "Filament out": "spool",
+    "Nozzle clog": "nozzle",
+    "AMS out": "ams",
+    "Bed temp": "bed",
+    "Plate off": "plate",
+    "Hotend fan": "fan",
+}
+# Prepare stage number (stg_cur, from ha-bambulab's stage list) -> the pet's
+# animation. Stages not listed here show the normal "Warming up" view.
+BAMBU_PREPARE_STAGES = {
+    1: "level",       # Auto bed leveling
+    2: "heatbed",     # Preheating heatbed
+    4: "change",      # Changing filament
+    7: "heatnozzle",  # Heating hotend
+    14: "clean",      # Cleaning nozzle tip
+    22: "unload",     # Filament unloading
+    24: "load",       # Filament loading
+}
+
+
+def bambu_alerts(data):
+    """
+    Active printer alerts, most important first: [{"code": ..., "label": ...}].
+    Reads print_error and the hms list from the printer's report.
+    """
+    alerts = []
+    try:
+        err = int(data.get("print_error") or 0)
+    except (TypeError, ValueError):
+        err = 0
+    if err:
+        key = f"{err & 0xFFFFFFFF:08X}"
+        label = BAMBU_PRINT_ERROR_LABELS.get(key)
+        if label:
+            alerts.append({"code": f"{key[:4]}-{key[4:]}", "label": label})
+    for item in data.get("hms") or []:
+        try:
+            attr = int(item["attr"]) & 0xFFFFFFFF
+            code = int(item["code"]) & 0xFFFFFFFF
+        except (TypeError, ValueError, KeyError):
+            continue
+        key = f"{attr:08X}{code:08X}"
+        label = BAMBU_HMS_LABELS.get(key)
+        if label:
+            alerts.append({"code": f"{key[0:4]}-{key[4:8]}-{key[8:12]}-{key[12:16]}",
+                           "label": label})
+    return alerts
+
+
 def bambu_summary(configured, data, connected, error):
     """
     What the pet draws, as a plain dict. Pure: no threads, no network, so the
@@ -2050,12 +2135,26 @@ def bambu_summary(configured, data, connected, error):
         "spd_lvl": None,
         "spd_mag": None,
         "filaments": [],
+        "stage": "",
+        "alert": None,
     }
     if not configured or not data:
         return out
     out["filaments"] = bambu_filaments(data)
+    alerts = bambu_alerts(data)
+    if alerts:
+        out["alert"] = {
+            "label": alerts[0]["label"],
+            "full": " | ".join(f"{a['code']}: {a['label']}" for a in alerts),
+            "visual": BAMBU_ALERT_VISUALS.get(alerts[0]["label"], ""),
+        }
     st = data.get("gcode_state", "IDLE")
     out["mood"] = BAMBU_STATES.get(st, ("", "idle"))[1]
+    if st == "PREPARE":
+        try:
+            out["stage"] = BAMBU_PREPARE_STAGES.get(int(data.get("stg_cur")), "")
+        except (TypeError, ValueError):
+            out["stage"] = ""
     try:
         out["percent"] = max(0.0, min(100.0, float(data.get("mc_percent", 0))))
     except (TypeError, ValueError):

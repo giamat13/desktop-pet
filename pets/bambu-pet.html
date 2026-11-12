@@ -318,7 +318,7 @@
     text-anchor: middle;
   }
 
-  #statusBadge { pointer-events: none; }
+  #statusBadge { pointer-events: auto; }
   #statusBadge rect {
     fill: #242934;
     stroke: #9ba3b4;
@@ -443,6 +443,43 @@
     95% { transform: scaleY(0.05); }
     97% { transform: scaleY(1); }
   }
+  /* Printer alert and prepare-stage animations, drawn in #fxLayer */
+  #fxLayer { pointer-events: none; }
+  #fxLayer > g { display: none; }
+  .fx-pulse { animation: fxPulse 1s ease-in-out infinite alternate; }
+  @keyframes fxPulse { from { opacity: .2; } to { opacity: 1; } }
+  .fx-door-leaf { transform-box: fill-box; transform-origin: left center; animation: fxDoor 1.8s ease-in-out infinite alternate; }
+  @keyframes fxDoor { from { transform: scaleX(1); } to { transform: scaleX(.3); } }
+  .fx-drip { animation: fxDrip 1.4s ease-in infinite; }
+  @keyframes fxDrip { 0% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(16px); opacity: 0; } }
+  .fx-mercury { transform-box: fill-box; transform-origin: center bottom; animation: fxMercury 2.4s ease-in-out infinite alternate; }
+  @keyframes fxMercury { from { transform: scaleY(.25); } to { transform: scaleY(1); } }
+  .fx-plate { transform-box: fill-box; transform-origin: center; animation: fxPlate 2s ease-in-out infinite alternate; }
+  @keyframes fxPlate { from { transform: rotate(-12deg); } to { transform: rotate(12deg); } }
+  .fx-fan { transform-box: fill-box; transform-origin: center; animation: fxFan 1.6s linear infinite; }
+  @keyframes fxFan { 0% { transform: rotate(0); } 30% { transform: rotate(60deg); } 36% { transform: rotate(60deg); } 60% { transform: rotate(90deg); } 66% { transform: rotate(90deg); } 100% { transform: rotate(180deg); } }
+  .fx-spin-slow { transform-box: fill-box; transform-origin: center; animation: fxSpin 3s linear infinite; }
+  .fx-spin { transform-box: fill-box; transform-origin: center; animation: fxSpin 1.6s linear infinite; }
+  .fx-spin-rev { transform-box: fill-box; transform-origin: center; animation: fxSpin 1.6s linear infinite reverse; }
+  @keyframes fxSpin { to { transform: rotate(360deg); } }
+  .fx-dot { animation: fxDot 1.8s ease-in-out infinite; }
+  @keyframes fxDot { 0%, 100% { opacity: .15; } 15% { opacity: 1; } 35% { opacity: .15; } }
+  .fx-wipe { animation: fxWipe 1.8s ease-in-out infinite alternate; }
+  @keyframes fxWipe { from { transform: translateX(-14px); } to { transform: translateX(14px); } }
+  .fx-old { animation: fxOld 2.4s ease-in-out infinite; }
+  @keyframes fxOld { 0% { transform: translateY(0); opacity: 1; } 45%, 100% { transform: translateY(-34px); opacity: 0; } }
+  .fx-new { animation: fxNew 2.4s ease-in-out infinite; }
+  @keyframes fxNew { 0%, 45% { transform: translateY(34px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+  .fx-up { animation: fxUp 1.2s ease-in-out infinite; }
+  @keyframes fxUp { 0%, 100% { transform: translateY(4px); opacity: .3; } 50% { transform: translateY(-6px); opacity: 1; } }
+  .fx-down { animation: fxDown 1.2s ease-in-out infinite; }
+  @keyframes fxDown { 0%, 100% { transform: translateY(-4px); opacity: .3; } 50% { transform: translateY(6px); opacity: 1; } }
+  .fx-wave { animation: fxWave 1.6s linear infinite; }
+  @keyframes fxWave { from { transform: translateX(0); } to { transform: translateX(-18px); } }
+  .fx-glow { animation: fxGlow 1.8s ease-in-out infinite alternate; }
+  @keyframes fxGlow { from { opacity: .15; } to { opacity: .7; } }
+  .fx-rise { animation: fxRise 1.6s ease-out infinite; }
+  @keyframes fxRise { 0% { transform: translateY(0); opacity: .9; } 100% { transform: translateY(-24px); opacity: 0; } }
 </style>
 </head>
 <body>
@@ -500,84 +537,6 @@
         <path d="M126 69 H174"
               stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
       </g>
-             <!-- Screen support behind the filament spools -->
-      <g id="cameraStand" aria-hidden="true" visibility="hidden">
-        <path d="M130 1 H134 V68 H130 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M166 1 H170 V68 H166 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M128 0 H172 V5 H128 Z"
-              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
-        <path d="M121 67 H179 V73 H121 Z"
-              fill="#202631" stroke="#788294" stroke-width="1"/>
-        <path d="M126 69 H174"
-              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
-      </g>
-             <!-- Screen support behind the filament spools -->
-      <g id="cameraStand" aria-hidden="true" visibility="hidden">
-        <path d="M130 1 H134 V68 H130 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M166 1 H170 V68 H166 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M128 0 H172 V5 H128 Z"
-              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
-        <path d="M121 67 H179 V73 H121 Z"
-              fill="#202631" stroke="#788294" stroke-width="1"/>
-        <path d="M126 69 H174"
-              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
-      </g>stroke="#151a23" stroke-width="1.2"/>
-             <!-- Screen support behind the filament spools -->
-      <g id="cameraStand" aria-hidden="true" visibility="hidden">
-        <path d="M130 1 H134 V68 H130 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M166 1 H170 V68 H166 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M128 0 H172 V5 H128 Z"
-              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
-        <path d="M121 67 H179 V73 H121 Z"
-              fill="#202631" stroke="#788294" stroke-width="1"/>
-        <path d="M126 69 H174"
-              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
-      </g>stroke="#8993a4" stroke-width="0.7"/>
-             <!-- Screen support behind the filament spools -->
-      <g id="cameraStand" aria-hidden="true" visibility="hidden">
-        <path d="M130 1 H134 V68 H130 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M166 1 H170 V68 H166 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M128 0 H172 V5 H128 Z"
-              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
-        <path d="M121 67 H179 V73 H121 Z"
-              fill="#202631" stroke="#788294" stroke-width="1"/>
-        <path d="M126 69 H174"
-              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
-      </g>202631" stroke="#788294" stroke-width="1"/>
-             <!-- Screen support behind the filament spools -->
-      <g id="cameraStand" aria-hidden="true" visibility="hidden">
-        <path d="M130 1 H134 V68 H130 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M166 1 H170 V68 H166 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M128 0 H172 V5 H128 Z"
-              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
-        <path d="M121 67 H179 V73 H121 Z"
-              fill="#202631" stroke="#788294" stroke-width="1"/>
-        <path d="M126 69 H174"
-              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
-      </g>5" stroke-width="0.8"/>
-             <!-- Screen support behind the filament spools -->
-      <g id="cameraStand" aria-hidden="true" visibility="hidden">
-        <path d="M130 1 H134 V68 H130 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M166 1 H170 V68 H166 Z"
-              fill="#343b48" stroke="#151a23" stroke-width="0.9"/>
-        <path d="M128 0 H172 V5 H128 Z"
-              fill="#596273" stroke="#8993a4" stroke-width="0.8"/>
-        <path d="M121 67 H179 V73 H121 Z"
-              fill="#202631" stroke="#788294" stroke-width="1"/>
-        <path d="M126 69 H174"
-              stroke="#c0c8d5" stroke-opacity="0.45" stroke-width="0.8"/>
-      </g>
 
         <g id="cameraMonitor" aria-label="Printer camera monitor" visibility="hidden" transform="translate(0 50)">
           <rect x="64" y="-160" width="172" height="112" rx="10" fill="#121720" stroke="#828b9c" stroke-width="2"/>
@@ -606,6 +565,7 @@
           <rect x="58" y="72" width="184" height="22" rx="14" fill="url(#lidGrad)" opacity="0.9"/>
 
           <g id="statusBadge" data-mood="idle" role="status" aria-live="polite">
+            <title id="statusTitle"></title>
             <rect x="146" y="73" width="80" height="14" rx="7"/>
             <circle cx="154" cy="80" r="2.7"/>
             <text id="statusText" x="163" y="83">Connecting</text>
@@ -778,7 +738,104 @@
           <text class="gaugeLabel" x="278" y="122.5">BED</text>
         </g>
       </g>
-    </svg>
+      <g id="fxLayer">
+    <g id="fx-door" class="fx">
+      <rect class="fx-pulse" x="56" y="70" width="188" height="152" rx="18" fill="none" stroke="#ff6b78" stroke-width="3"/>
+      <rect x="134" y="132" width="32" height="54" rx="2" fill="#0b0d12" stroke="#ff6b78" stroke-width="2"/>
+      <rect class="fx-door-leaf" x="134" y="132" width="32" height="54" rx="2" fill="#ff6b78" fill-opacity=".35" stroke="#ff6b78" stroke-width="2"/>
+    </g>
+    <g id="fx-spool" class="fx">
+      <rect class="fx-pulse" x="56" y="70" width="188" height="152" rx="18" fill="none" stroke="#ff6b78" stroke-width="3"/>
+      <circle class="fx-spin-slow" cx="150" cy="158" r="16" fill="none" stroke="#ff6b78" stroke-width="3" stroke-dasharray="4 4"/>
+      <circle class="fx-pulse" cx="150" cy="158" r="4" fill="#ff6b78"/>
+    </g>
+    <g id="fx-nozzle" class="fx">
+      <rect class="fx-pulse" x="56" y="70" width="188" height="152" rx="18" fill="none" stroke="#ff6b78" stroke-width="3"/>
+      <circle cx="150" cy="124" r="4" fill="#ff6b78"/>
+      <circle class="fx-drip" cx="150" cy="126" r="2.6" fill="#ff6b78"/>
+    </g>
+    <g id="fx-ams" class="fx">
+      <rect class="fx-pulse" x="56" y="70" width="188" height="152" rx="18" fill="none" stroke="#ff6b78" stroke-width="3"/>
+      <rect x="102" y="148" width="16" height="20" rx="3" fill="none" stroke="#70efb6" stroke-width="1.8"/>
+      <rect x="122" y="148" width="16" height="20" rx="3" fill="none" stroke="#70efb6" stroke-width="1.8"/>
+      <rect class="fx-pulse" x="142" y="148" width="16" height="20" rx="3" fill="#ff6b78" fill-opacity=".5" stroke="#ff6b78" stroke-width="2"/>
+      <rect x="162" y="148" width="16" height="20" rx="3" fill="none" stroke="#70efb6" stroke-width="1.8"/>
+    </g>
+    <g id="fx-bed" class="fx">
+      <rect class="fx-pulse" x="56" y="70" width="188" height="152" rx="18" fill="none" stroke="#ff6b78" stroke-width="3"/>
+      <rect x="146" y="128" width="8" height="40" rx="4" fill="#0b0d12" stroke="#ff6b78" stroke-width="1.5"/>
+      <rect class="fx-mercury" x="148.5" y="134" width="3" height="32" rx="1.5" fill="#ff6b78"/>
+      <circle class="fx-pulse" cx="150" cy="176" r="7" fill="#ff6b78"/>
+    </g>
+    <g id="fx-plate" class="fx">
+      <rect class="fx-pulse" x="56" y="70" width="188" height="152" rx="18" fill="none" stroke="#ff6b78" stroke-width="3"/>
+      <rect class="fx-plate" x="108" y="150" width="84" height="10" rx="4" fill="#ff6b78" fill-opacity=".45" stroke="#ff6b78" stroke-width="2"/>
+    </g>
+    <g id="fx-fan" class="fx">
+      <rect class="fx-pulse" x="56" y="70" width="188" height="152" rx="18" fill="none" stroke="#ff6b78" stroke-width="3"/>
+      <g class="fx-fan" fill="#ff6b78" fill-opacity=".85">
+        <ellipse cx="150" cy="148" rx="6" ry="11"/>
+        <ellipse cx="150" cy="168" rx="6" ry="11"/>
+        <ellipse cx="140" cy="158" rx="11" ry="6"/>
+        <ellipse cx="160" cy="158" rx="11" ry="6"/>
+      </g>
+      <circle cx="150" cy="158" r="3" fill="#0b0d12"/>
+    </g>
+    <g id="fx-level" class="fx">
+      <circle class="fx-dot" cx="120" cy="140" r="3.2" fill="#70efb6" style="animation-delay:0s"/>
+      <circle class="fx-dot" cx="150" cy="140" r="3.2" fill="#70efb6" style="animation-delay:.2s"/>
+      <circle class="fx-dot" cx="180" cy="140" r="3.2" fill="#70efb6" style="animation-delay:.4s"/>
+      <circle class="fx-dot" cx="120" cy="158" r="3.2" fill="#70efb6" style="animation-delay:.6s"/>
+      <circle class="fx-dot" cx="150" cy="158" r="3.2" fill="#70efb6" style="animation-delay:.8s"/>
+      <circle class="fx-dot" cx="180" cy="158" r="3.2" fill="#70efb6" style="animation-delay:1s"/>
+      <circle class="fx-dot" cx="120" cy="176" r="3.2" fill="#70efb6" style="animation-delay:1.2s"/>
+      <circle class="fx-dot" cx="150" cy="176" r="3.2" fill="#70efb6" style="animation-delay:1.4s"/>
+      <circle class="fx-dot" cx="180" cy="176" r="3.2" fill="#70efb6" style="animation-delay:1.6s"/>
+    </g>
+    <g id="fx-clean" class="fx">
+      <g class="fx-wipe">
+        <rect x="132" y="124" width="36" height="6" rx="3" fill="#d9dde6"/>
+        <path d="M137 130v3M144 130v3M150 130v3M156 130v3M163 130v3" stroke="#d9dde6" stroke-width="1.5" stroke-linecap="round"/>
+      </g>
+      <circle class="fx-glow" cx="150" cy="122" r="5" fill="#70efb6"/>
+    </g>
+    <g id="fx-change" class="fx">
+      <g class="fx-old">
+        <circle cx="150" cy="158" r="13" fill="none" stroke="#70efb6" stroke-width="2.4"/>
+        <circle cx="150" cy="158" r="3.5" fill="#70efb6"/>
+      </g>
+      <g class="fx-new">
+        <circle cx="150" cy="158" r="13" fill="none" stroke="#70efb6" stroke-width="2.4"/>
+        <circle cx="150" cy="158" r="3.5" fill="#70efb6"/>
+      </g>
+    </g>
+    <g id="fx-unload" class="fx">
+      <g class="fx-spin-rev">
+        <circle cx="150" cy="158" r="13" fill="none" stroke="#70efb6" stroke-width="2.4"/>
+        <circle cx="150" cy="158" r="3.5" fill="#70efb6"/>
+        <path d="M150 145V171M137 151.5L163 164.5M137 164.5L163 151.5" fill="none" stroke="#70efb6" stroke-width="2" stroke-linecap="round"/>
+      </g>
+      <path class="fx-up" d="M150 128V142M143 136L150 128L157 136" fill="none" stroke="#70efb6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="fx-load" class="fx">
+      <g class="fx-spin">
+        <circle cx="150" cy="158" r="13" fill="none" stroke="#70efb6" stroke-width="2.4"/>
+        <circle cx="150" cy="158" r="3.5" fill="#70efb6"/>
+        <path d="M150 145V171M137 151.5L163 164.5M137 164.5L163 151.5" fill="none" stroke="#70efb6" stroke-width="2" stroke-linecap="round"/>
+      </g>
+      <path class="fx-down" d="M150 190V176M143 183L150 190L157 183" fill="none" stroke="#70efb6" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="fx-heatbed" class="fx">
+      <g class="fx-wave"><path d="M96 228q9-6 18 0t18 0t18 0t18 0t18 0t18 0t18 0" fill="none" stroke="#ffb454" stroke-width="2.4" stroke-linecap="round"/></g>
+      <g class="fx-wave" style="animation-delay:-.8s"><path d="M96 236q9-6 18 0t18 0t18 0t18 0t18 0t18 0t18 0" fill="none" stroke="#ffb454" stroke-width="2.4" stroke-linecap="round"/></g>
+    </g>
+    <g id="fx-heatnozzle" class="fx">
+      <circle class="fx-glow" cx="150" cy="122" r="12" fill="#ffb454"/>
+      <circle class="fx-rise" cx="144" cy="120" r="2" fill="#ffb454"/>
+      <circle class="fx-rise" cx="156" cy="120" r="2" fill="#ffb454" style="animation-delay:.8s"/>
+    </g>
+  </g>
+</svg>
   </div>
 </div>
 
@@ -801,6 +858,7 @@
   const cameraPlaceholderText = document.getElementById('cameraPlaceholderText');
   const statusBadge = document.getElementById('statusBadge');
   const statusText = document.getElementById('statusText');
+  const statusTitle = document.getElementById('statusTitle');
   const elapsedBadge = document.getElementById('elapsedBadge');
   const elapsedText = document.getElementById('elapsedText');
   const remainingBadge = document.getElementById('remainingBadge');
@@ -853,10 +911,29 @@
     fillEl.setAttribute('stroke-dasharray', `${(frac * GAUGE_ARC).toFixed(2)} ${GAUGE_CIRC.toFixed(2)}`);
   }
 
+  const STAGE_LABELS = {
+    level: 'Bed leveling',
+    heatbed: 'Heating bed',
+    change: 'Filament change',
+    unload: 'Unloading',
+    load: 'Loading',
+    clean: 'Nozzle cleaning',
+    heatnozzle: 'Heating nozzle'
+  };
+  const FX_KEYS = ['door', 'spool', 'nozzle', 'ams', 'bed', 'plate', 'fan',
+    'level', 'heatbed', 'change', 'unload', 'load', 'clean', 'heatnozzle'];
+  // Shows one animation (or none, when key is empty) inside the pet.
+  function showFx(key) {
+    svg.dataset.fx = key || '';
+    for (const k of FX_KEYS) {
+      const g = document.getElementById('fx-' + k);
+      if (g) g.style.display = k === key ? 'inline' : 'none';
+    }
+  }
+
   function render(s) {
     const percent = s && s.configured && s.has_data ? Number(s.percent) : NaN;
 
-    screenPercent.textContent = displayValue(Number.isFinite(percent) ? `${percent}%` : '--%');
     const headProgress = Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) : 50;
     printHead.setAttribute('transform', `translate(${headProgress * 1.44 - 72} 0)`);
 
@@ -884,22 +961,43 @@
       }
     }
 
-    statusBadge.dataset.mood = mood;
+    // A known printer alert replaces the state word, turns the badge red and
+    // puts the face in the fail state. A prepare stage (PREPARE + stg_cur)
+    // shows its own English name and animation. Neither shows a percentage.
+    const live = !!(s && s.configured && s.connected && s.has_data);
+    let badgeMood = mood;
+    let faceMood = mood;
+    let tip = '';
+    let fx = '';
+    if (live && s.alert) {
+      label = s.alert.label;
+      tip = s.alert.full;
+      badgeMood = 'fail';
+      faceMood = 'fail';
+      fx = s.alert.visual || '';
+    } else if (live && s.stage) {
+      label = STAGE_LABELS[s.stage] || label;
+      fx = s.stage;
+    }
+    statusBadge.dataset.mood = badgeMood;
+    statusTitle.textContent = tip;
     currentMood = mood;
     svg.classList.toggle('sleeping', !!(s && s.sleeping));
-    svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(mood) ? mood : 'idle';
+    svg.dataset.mood = ['run', 'pause', 'done', 'fail', 'idle'].includes(faceMood) ? faceMood : 'idle';
     statusText.textContent = displayValue(label);
+    showFx(fx);
+    screenPercent.textContent = fx ? '' : displayValue(Number.isFinite(percent) ? `${percent}%` : '--%');
 
     let expression = 'neutral';
     if (!s || !s.configured || !s.connected || !s.has_data) {
       expression = 'worried';
-    } else if (mood === 'fail' || mood === 'offline') {
+    } else if (faceMood === 'fail' || mood === 'offline') {
       expression = 'sad';
     } else if (mood === 'done') {
       expression = 'excited';
     } else if (mood === 'pause') {
       expression = 'flat';
-    } else if (s.warming) {
+    } else if (s.warming || s.stage) {
       expression = 'focused';
     } else if (mood === 'run' && percent >= 90) {
       expression = 'near-finish';

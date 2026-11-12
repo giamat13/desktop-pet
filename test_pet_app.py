@@ -705,8 +705,18 @@ def _test_bambu_status():
         "configured", "connected", "error", "has_data", "mood", "percent",
         "elapsed_minutes", "remaining_minutes", "layer_num",
         "nozzle_temp", "nozzle_target", "bed_temp", "bed_target", "warming", "total_layers", "wifi_level",
-        "spd_lvl", "spd_mag", "filaments",
+        "spd_lvl", "spd_mag", "filaments", "stage", "alert",
     }, s
+
+    # Prepare stages and alerts: known codes get a pet animation, unknown codes show nothing
+    s_stage = pet_app.bambu_summary(True, {"gcode_state": "PREPARE", "stg_cur": 14}, True, "")
+    assert s_stage["stage"] == "clean", s_stage
+    s_unmapped = pet_app.bambu_summary(True, {"gcode_state": "PREPARE", "stg_cur": 3}, True, "")
+    assert s_unmapped["stage"] == "", s_unmapped
+    s_door = pet_app.bambu_summary(True, {"gcode_state": "PAUSE", "print_error": 50364431}, True, "")
+    assert s_door["alert"]["visual"] == "door" and s_door["alert"]["label"] == "Door open", s_door
+    s_unknown = pet_app.bambu_summary(True, {"gcode_state": "RUNNING", "print_error": 117473286}, True, "")
+    assert s_unknown["alert"] is None, s_unknown
 
     for signal, expected in (("-55dBm", 3), ("-68dBm", 2), ("-82dBm", 1), ("unavailable", None)):
         summary = pet_app.bambu_summary(True, {"wifi_signal": signal}, True, "")
