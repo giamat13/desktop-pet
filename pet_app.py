@@ -2137,10 +2137,15 @@ def bambu_summary(configured, data, connected, error):
         "filaments": [],
         "stage": "",
         "alert": None,
+        "chamber_temp": None,
+        "fans": {"part": None, "aux": None, "chamber": None},
+        "ams_units": [],
     }
     if not configured or not data:
         return out
     out["filaments"] = bambu_filaments(data)
+    out["fans"] = bambu_fans(data)
+    out["ams_units"] = bambu_ams_units(data)
     alerts = bambu_alerts(data)
     if alerts:
         out["alert"] = {
@@ -2176,6 +2181,7 @@ def bambu_summary(configured, data, connected, error):
         ("nozzle_target_temper", "nozzle_target"),
         ("bed_temper", "bed_temp"),
         ("bed_target_temper", "bed_target"),
+        ("chamber_temper", "chamber_temp"),
     ):
         try:
             value = float(data.get(source))
@@ -2302,6 +2308,73 @@ def _bambu_tray_id(unit, unit_index, tray, tray_index):
     return unit_id * 4 + tray_id
 
 
+BAMBU_FAN_FIELDS = (
+    ("part", "cooling_fan_speed"),   # part cooling fan
+    ("aux", "big_fan1_speed"),       # auxiliary fan
+    ("chamber", "big_fan2_speed"),   # chamber fan
+)
+BAMBU_CHANGE_OLD_STAGES = (4, 22)  # changing filament, unloading: highlight stays on the old tray
+BAMBU_CHANGE_NEW_STAGE = 24        # loading: highlight moves to the target tray
+
+
+def bambu_fans(data):
+    """Speed per fan ("part", "aux", "chamber") as an int, or None when not reported. Pure."""
+    fans = {}
+    for name, field in BAMBU_FAN_FIELDS:
+        speed = _bambu_int(data.get(field))
+        fans[name] = speed if speed is not None and speed >= 0 else None
+    return fans
+
+
+def bambu_ams_units(data):
+    """
+    One entry per AMS unit: humidity index (1-5, None if unknown), temperature
+    in °C (None if unknown) and whether it is drying (`dry_time` above 0). Pure.
+    """
+    ams = data.get("ams")
+    units = ams.get("ams") if isinstance(ams, dict) else None
+    out = []
+    for unit_index, unit in enumerate(units if isinstance(units, list) else []):
+        if not isinstance(unit, dict):
+            continue
+        humidity = _bambu_int(unit.get("humidity"))
+        if humidity is not None and not 1 <= humidity <= 5:
+            humidity = None
+        try:
+            temp = float(unit.get("temp"))
+        except (TypeError, ValueError):
+            temp = float("nan")
+        dry_time = _bambu_int(unit.get("dry_time"))
+        out.append({
+            "letter": chr(ord("A") + min(max(unit_index, 0), 25)),
+            "humidity": humidity,
+            "temp": round(temp, 1) if math.isfinite(temp) else None,
+            "drying": dry_time is not None and dry_time > 0,
+        })
+    return out
+
+
+def _bambu_active_tray(ams, data):
+    """
+    The tray id to highlight, or None. `tray_now` wins while a tray is loaded
+    ("255" is none). With no tray loaded during a filament change, the
+    highlight stays on the old tray (`tray_pre`) while it is changing or
+    unloading, and moves to the target (`tray_tar`) while it loads. Pure.
+    """
+    def usable(value):
+        return value if value is not None and value != 255 else None
+
+    tray_now = usable(_bambu_int(ams.get("tray_now")))
+    if tray_now is not None:
+        return tray_now
+    stage = _bambu_int(data.get("stg_cur"))
+    if stage in BAMBU_CHANGE_OLD_STAGES:
+        return usable(_bambu_int(ams.get("tray_pre")))
+    if stage == BAMBU_CHANGE_NEW_STAGE:
+        return usable(_bambu_int(ams.get("tray_tar")))
+    return None
+
+
 def bambu_filaments(data):
     """
     Every AMS slot plus the external spool, in order, from the `ams` block of
@@ -2312,8 +2385,9 @@ def bambu_filaments(data):
     """
     spools = []
     ams = data.get("ams")
-    units = ams.get("ams") if isinstance(ams, dict) else None
-    tray_now = _bambu_int(ams.get("tray_now")) if isinstance(ams, dict) else None
+    ams_dict = ams if isinstance(ams, dict) else {}
+    units = ams_dict.get("ams")
+    tray_now = _bambu_active_tray(ams_dict, data)  # the tray to highlight, or None
     for unit_index, unit in enumerate(units if isinstance(units, list) else []):
         if not isinstance(unit, dict):
             continue

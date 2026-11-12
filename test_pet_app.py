@@ -706,6 +706,7 @@ def _test_bambu_status():
         "elapsed_minutes", "remaining_minutes", "layer_num",
         "nozzle_temp", "nozzle_target", "bed_temp", "bed_target", "warming", "total_layers", "wifi_level",
         "spd_lvl", "spd_mag", "filaments", "stage", "alert",
+        "chamber_temp", "fans", "ams_units",
     }, s
 
     # Prepare stages and alerts: known codes get a pet animation, unknown codes show nothing
@@ -873,6 +874,54 @@ def _test_bambu_filaments():
     assert [x["slot"] for x in s["filaments"]] == ["A1", "A2", "A3", "A4", "EXT"], s
     assert pet_app.bambu_summary(True, {}, False, "")["filaments"] == []
     print("OK: bambu_filaments self-check passed")
+
+
+def _test_bambu_chamber_fans_ams():
+    """
+    Chamber temperature, fan speeds, AMS humidity/temperature/drying, and the
+    filament-change highlight that moves from the old tray to the new one. Pure.
+    """
+    report = {"gcode_state": "RUNNING", "chamber_temper": 38.4, "cooling_fan_speed": "15",
+              "big_fan1_speed": "0", "big_fan2_speed": "4",
+              "ams": {"tray_now": "1", "ams": [
+                  {"id": "0", "humidity": "2", "temp": "22.5", "dry_time": 0,
+                   "tray": [{"id": "0", "tray_type": "PLA"}, {"id": "1", "tray_type": "PETG"}]},
+                  {"id": "1", "humidity": "4", "temp": "28.0", "dry_time": 120,
+                   "tray": [{"id": "0", "tray_type": "ABS"}]}]}}
+    s = pet_app.bambu_summary(True, report, True, "")
+    assert s["chamber_temp"] == 38, s
+    assert s["fans"] == {"part": 15, "aux": 0, "chamber": 4}, s["fans"]
+    assert s["ams_units"] == [
+        {"letter": "A", "humidity": 2, "temp": 22.5, "drying": False},
+        {"letter": "B", "humidity": 4, "temp": 28.0, "drying": True}], s["ams_units"]
+
+    bare = pet_app.bambu_summary(True, {"gcode_state": "RUNNING"}, True, "")
+    assert bare["chamber_temp"] is None and bare["ams_units"] == [], bare
+    assert bare["fans"] == {"part": None, "aux": None, "chamber": None}, bare["fans"]
+    assert pet_app.bambu_ams_units({"ams": {"ams": [
+        {"humidity": "9", "temp": "nan", "dry_time": "x"}, None]}}) == [
+        {"letter": "A", "humidity": None, "temp": None, "drying": False}]
+
+    # Filament change: the highlight stays on the old tray while unloading and
+    # moves to the target while loading. tray_now "255" means nothing is loaded.
+    changing = {"gcode_state": "RUNNING", "ams": {"tray_now": "255", "tray_pre": "1",
+                "tray_tar": "2", "ams": [{"id": "0", "tray": [
+                    {"id": str(i), "tray_type": "PLA"} for i in range(4)]}]}}
+
+    def active_at(stage, report=changing):
+        r = json.loads(json.dumps(report))
+        if stage is not None:
+            r["stg_cur"] = stage
+        return [x["slot"] for x in pet_app.bambu_filaments(r) if x["active"]]
+
+    assert active_at(22) == ["A2"], "unloading: highlight stays on the old tray"
+    assert active_at(4) == ["A2"], "changing: highlight stays on the old tray"
+    assert active_at(24) == ["A3"], "loading: highlight moves to the target tray"
+    assert active_at(None) == [], "no stage and nothing loaded: nothing highlighted"
+    loaded = json.loads(json.dumps(changing))
+    loaded["ams"]["tray_now"] = "2"
+    assert active_at(22, loaded) == ["A3"], "tray_now wins once a tray is loaded"
+    print("OK: bambu chamber, fans, AMS and tray-change self-check passed")
 
 
 def _test_bambu_camera_protocol():
@@ -1332,6 +1381,7 @@ def main():
     _test_read_vscode_dirty()
     _test_read_discord_voice_state()
     _test_sample_health_once()
+    _test_bambu_chamber_fans_ams()
     _test_bambu_status()
     _test_bambu_filaments()
     _test_bambu_camera_protocol()

@@ -289,6 +289,43 @@
   #bedBadge .gaugeFill { stroke: #8dd5ff; }
   #bedBadge .gaugeLabel { fill: #8dd5ff; }
 
+  /* Chamber temperature: enclosed printers only; hidden when not reported. */
+  #chamberBadge { display: none; }
+  #chamberBadge.visible { display: inline; }
+  #chamberBadge .gaugeFill { stroke: #ff9f6b; }
+  #chamberBadge .gaugeLabel { fill: #ff9f6b; }
+
+  /* Fans: shown only while spinning (speed above 0). */
+  .fanIcon { display: none; pointer-events: none; }
+  .fanIcon.visible { display: inline; }
+  .fanIcon .fanHousing { fill: #0b0d12; stroke: #46505e; stroke-width: 1; }
+  .fanBlades { transform-box: fill-box; transform-origin: center; animation: fanTurn 1s linear infinite; }
+  @keyframes fanTurn { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .fanBlades { animation-duration: 6s !important; }
+  }
+
+  /* AMS units: humidity drop (filled in 5 steps), thermometer, drying pulse. */
+  .amsPill { fill: #171b24; stroke: #46505e; stroke-width: 0.9; }
+  .amsLetter { font: 700 5.5px "Segoe UI", system-ui, sans-serif; fill: #e0e7f2; }
+  .amsDropBack { fill: #0b0d12; stroke: #5b6a7e; stroke-width: 0.5; }
+  .amsDropRim { fill: none; stroke: #8dd5ff; stroke-opacity: 0.55; stroke-width: 0.5; }
+  .amsTubeBack { fill: #0b0d12; stroke: #5b6a7e; stroke-width: 0.5; }
+  .amsUnit.drying .amsPill { stroke: #ff9f6b; animation: amsDry 1.4s ease-in-out infinite; }
+  @keyframes amsDry { 0%, 100% { stroke-opacity: 0.35; } 50% { stroke-opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .amsUnit.drying .amsPill { animation: none; }
+  }
+
+  /* The green highlight glides from the old spool to the new one. */
+  #spoolRow .spoolGlider {
+    fill: none;
+    stroke: #2fd16b;
+    stroke-width: 2.4;
+    pointer-events: none;
+    transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.4s ease;
+  }
+
   #firstLayerIndicator, #layerBadge { display: none; }
   #firstLayerIndicator.visible, #layerBadge.visible { display: inline; }
   #wifiIndicator { display: none; }
@@ -606,6 +643,19 @@
             <rect x="140" y="91" width="20" height="3" rx="1.5" fill="#dfe3ec" opacity="0.7"/>
             <rect x="146" y="108" width="8" height="9" rx="2" fill="#c9ccd6"/>
             <path d="M146.5 117 L153.5 117 L150 123 Z" fill="#f5c542"/>
+            <!-- Part cooling fan, mounted on the head so it moves with the nozzle. -->
+            <g id="fanPart" class="fanIcon" role="img" aria-label="Part cooling fan">
+              <title>Part cooling fan</title>
+              <circle class="fanHousing" cx="128" cy="104" r="7.5"/>
+              <g transform="translate(128 104)">
+                <g class="fanBlades" fill="#8dd5ff" fill-opacity="0.9">
+                  <ellipse cx="0" cy="-3.6" rx="1.8" ry="3.2"/>
+                  <ellipse cx="0" cy="3.6" rx="1.8" ry="3.2"/>
+                  <ellipse cx="-3.6" cy="0" rx="3.2" ry="1.8"/>
+                  <ellipse cx="3.6" cy="0" rx="3.2" ry="1.8"/>
+                </g>
+              </g>
+            </g>
           </g>
 
           <rect x="82" y="119" width="136" height="78" rx="14" fill="#15171e" stroke="#3a3e4b" stroke-width="1.5"/>
@@ -737,6 +787,37 @@
           <circle id="bedFill" class="gaugeFill" cx="278" cy="120" r="18" stroke-dasharray="0 113.10" transform="rotate(135 278 120)"/>
           <text class="gaugeLabel" x="278" y="122.5">BED</text>
         </g>
+        <g id="chamberBadge" class="temperatureGauge" role="img" aria-label="Chamber temperature gauge">
+          <circle class="gaugeBack" cx="22" cy="226" r="22"/>
+          <circle class="gaugeTrack" cx="22" cy="226" r="18" stroke-dasharray="84.82 113.10" transform="rotate(135 22 226)"/>
+          <circle id="chamberFill" class="gaugeFill" cx="22" cy="226" r="18" stroke-dasharray="0 113.10" transform="rotate(135 22 226)"/>
+          <text class="gaugeLabel" x="22" y="228.5">CHAMBER</text>
+        </g>
+        <g id="fanAux" class="fanIcon" role="img" aria-label="Auxiliary fan">
+          <title>Auxiliary fan</title>
+          <circle class="fanHousing" cx="262" cy="230" r="9.5"/>
+          <g transform="translate(262 230)">
+            <g class="fanBlades" fill="#70efb6" fill-opacity="0.9">
+              <ellipse cx="0" cy="-3.6" rx="1.8" ry="3.2"/>
+              <ellipse cx="0" cy="3.6" rx="1.8" ry="3.2"/>
+              <ellipse cx="-3.6" cy="0" rx="3.2" ry="1.8"/>
+              <ellipse cx="3.6" cy="0" rx="3.2" ry="1.8"/>
+            </g>
+          </g>
+        </g>
+        <g id="fanChamber" class="fanIcon" role="img" aria-label="Chamber fan">
+          <title>Chamber fan</title>
+          <circle class="fanHousing" cx="292" cy="230" r="9.5"/>
+          <g transform="translate(292 230)">
+            <g class="fanBlades" fill="#ff9f6b" fill-opacity="0.9">
+              <ellipse cx="0" cy="-3.6" rx="1.8" ry="3.2"/>
+              <ellipse cx="0" cy="3.6" rx="1.8" ry="3.2"/>
+              <ellipse cx="-3.6" cy="0" rx="3.2" ry="1.8"/>
+              <ellipse cx="3.6" cy="0" rx="3.2" ry="1.8"/>
+            </g>
+          </g>
+        </g>
+        <g id="amsStrip" aria-label="AMS humidity and temperature"></g>
       </g>
       <g id="fxLayer">
     <g id="fx-door" class="fx">
@@ -870,6 +951,12 @@
   const layerBadge = document.getElementById('layerBadge');
   const layerCount = document.getElementById('layerCount');
   const layerFill = document.getElementById('layerFill');
+  const chamberBadge = document.getElementById('chamberBadge');
+  const chamberFill = document.getElementById('chamberFill');
+  const fanPart = document.getElementById('fanPart');
+  const fanAux = document.getElementById('fanAux');
+  const fanChamber = document.getElementById('fanChamber');
+  const amsStrip = document.getElementById('amsStrip');
 
   let previousStateKey = null;
   let stateReactionTimer = null;
@@ -902,13 +989,107 @@
   const GAUGE_CIRC = 2 * Math.PI * 18;
   const GAUGE_ARC = GAUGE_CIRC * 0.75;
 
+  function setGaugeFrac(fillEl, frac) {
+    fillEl.setAttribute('stroke-dasharray', `${(frac * GAUGE_ARC).toFixed(2)} ${GAUGE_CIRC.toFixed(2)}`);
+  }
+
   function setGauge(fillEl, temp, target) {
     const t = Number(temp);
     const g = Number(target);
     const frac = Number.isFinite(t) && Number.isFinite(g) && g > 0
       ? Math.max(0, Math.min(1, t / g))
       : 0;
-    fillEl.setAttribute('stroke-dasharray', `${(frac * GAUGE_ARC).toFixed(2)} ${GAUGE_CIRC.toFixed(2)}`);
+    setGaugeFrac(fillEl, frac);
+  }
+
+  // Chamber has no target temperature, so the arc fills against a fixed scale.
+  const CHAMBER_MAX_C = 60;
+  function setChamberGauge(fillEl, temp) {
+    const t = Number(temp);
+    setGaugeFrac(fillEl, Number.isFinite(t) ? Math.max(0, Math.min(1, t / CHAMBER_MAX_C)) : 0);
+  }
+
+  // A fan is shown only while it spins. Speed scale 0-15 is assumed (not yet
+  // checked on a printer); higher speed means a faster spin.
+  function setFan(el, speed) {
+    const v = Number(speed);
+    const on = Number.isFinite(v) && v > 0;
+    el.classList.toggle('visible', on);
+    if (on) {
+      const frac = Math.max(0.1, Math.min(1, v / 15));
+      el.querySelector('.fanBlades').style.animationDuration = `${(2 - 1.5 * frac).toFixed(2)}s`;
+    }
+  }
+
+  // One chip per AMS unit. Humidity is a water drop filled in 5 steps, and
+  // temperature a small thermometer. The pet shows no numbers; the tooltip does.
+  let amsKey = null;
+  let amsUid = 0;
+  const AMS_X_STEP = 36;
+
+  function buildAmsUnit(u, x) {
+    const hum = Number(u.humidity);
+    const hasHum = Number.isFinite(hum);
+    const level = hasHum ? Math.max(0, Math.min(5, hum)) : 0;
+    const temp = Number(u.temp);
+    const hasTemp = Number.isFinite(temp);
+
+    const tip = [`AMS ${u.letter}`];
+    if (hasHum) tip.push(`humidity ${hum} of 5`);
+    if (hasTemp) tip.push(`${temp.toFixed(1)} °C`);
+    if (u.drying) tip.push('drying');
+
+    const g = svgNode('g', { class: u.drying ? 'amsUnit drying' : 'amsUnit' });
+    g.appendChild(svgNode('title', {}, tip.join(' · ')));
+    g.appendChild(svgNode('rect', { class: 'amsPill', x: x - 15, y: 234, width: 30, height: 16, rx: 8 }));
+    g.appendChild(svgNode('text', { class: 'amsLetter', x: x - 11, y: 244.6 }, u.letter));
+
+    // Drop: top at y 236, round bottom at y 245.6, centred on dx.
+    const dx = x - 1.5, base = 245.6;
+    const drop = `M ${dx} 236 C ${dx + 2.5} 238.5 ${dx + 3.6} 240.3 ${dx + 3.6} 242 ` +
+      `A 3.6 3.6 0 0 1 ${dx - 3.6} 242 C ${dx - 3.6} 240.3 ${dx - 2.5} 238.5 ${dx} 236 Z`;
+    const clipId = `amsDrop${++amsUid}`;
+    const defs = svgNode('defs');
+    const clip = svgNode('clipPath', { id: clipId });
+    clip.appendChild(svgNode('path', { d: drop }));
+    defs.appendChild(clip);
+    g.appendChild(defs);
+    g.appendChild(svgNode('path', { class: 'amsDropBack', d: drop }));
+    const fillH = (base - 236) * level / 5;
+    if (fillH > 0) {
+      const colour = level >= 4 ? '#ff6b78' : level >= 3 ? '#ffc45c' : '#70efb6';
+      g.appendChild(svgNode('rect', {
+        x: dx - 5, y: base - fillH, width: 10, height: fillH,
+        fill: colour, 'clip-path': `url(#${clipId})`
+      }));
+    }
+    g.appendChild(svgNode('path', { class: 'amsDropRim', d: drop }));
+
+    // Thermometer: tube from y 236 to 245.5, scale 15-40 °C; warm tone from 35 °C.
+    const tx = x + 8.5;
+    g.appendChild(svgNode('rect', { class: 'amsTubeBack', x: tx - 1.5, y: 236, width: 3, height: 9.5, rx: 1.5 }));
+    const hot = hasTemp && temp >= 35;
+    const tone = !hasTemp ? '#46505e' : hot ? '#ff9f6b' : '#8dd5ff';
+    if (hasTemp) {
+      const tubeH = 9.5 * Math.max(0, Math.min(1, (temp - 15) / 25));
+      if (tubeH > 0) {
+        g.appendChild(svgNode('rect', {
+          x: tx - 1, y: 245.5 - tubeH, width: 2, height: tubeH, fill: tone
+        }));
+      }
+    }
+    g.appendChild(svgNode('circle', { cx: tx, cy: 247, r: 2.2, fill: tone }));
+    return g;
+  }
+
+  function renderAms(units) {
+    const list = Array.isArray(units) ? units : [];
+    const key = JSON.stringify(list);
+    if (key === amsKey) return;
+    amsKey = key;
+    amsStrip.replaceChildren();
+    const n = list.length;
+    list.forEach((u, i) => amsStrip.appendChild(buildAmsUnit(u, 150 + (i - (n - 1) / 2) * AMS_X_STEP)));
   }
 
   const STAGE_LABELS = {
@@ -1047,6 +1228,17 @@
 
     setGauge(nozzleFill, s && s.nozzle_temp, s && s.nozzle_target);
     setGauge(bedFill, s && s.bed_temp, s && s.bed_target);
+
+    // Chamber gauge, fans and AMS units: only from a live report.
+    const reporting = !!(s && s.connected && s.has_data);
+    const chamber = reporting && s.chamber_temp != null ? Number(s.chamber_temp) : NaN;
+    chamberBadge.classList.toggle('visible', Number.isFinite(chamber));
+    if (Number.isFinite(chamber)) setChamberGauge(chamberFill, chamber);
+    const fans = reporting && s.fans ? s.fans : {};
+    setFan(fanPart, fans.part);
+    setFan(fanAux, fans.aux);
+    setFan(fanChamber, fans.chamber);
+    renderAms(reporting && Array.isArray(s.ams_units) ? s.ams_units : []);
 
     const layer = s && s.layer_num != null ? Number(s.layer_num) : NaN;
     const totalLayers = s && s.total_layers != null ? Number(s.total_layers) : NaN;
@@ -1447,6 +1639,22 @@
     return g;
   }
 
+  // Where the green highlight is now: slot, x and page, so a change can glide.
+  let activeSpot = null;
+
+  function glideHighlight(fromX, toX) {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const glider = svgNode('rect', {
+      class: 'spoolGlider', x: fromX - 24, y: 16, width: 48, height: 54, rx: 7
+    });
+    spoolRow.appendChild(glider);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      glider.style.transform = `translateX(${toX - fromX}px)`;
+    }));
+    setTimeout(() => { glider.style.opacity = '0'; }, 650);
+    setTimeout(() => glider.remove(), 1100);
+  }
+
   function renderSpools() {
     const loaded = spoolList.filter(spool => spool && !spool.empty);
     const pages = Math.max(1, Math.ceil(loaded.length / SPOOLS_PER_PAGE));
@@ -1465,6 +1673,18 @@
     shown.forEach((spool, i) => {
       spoolRow.appendChild(buildSpool(spool, xs[i]));
     });
+
+    const inUseIndex = shown.findIndex(spool => spool.active);
+    const previous = activeSpot;
+    if (inUseIndex < 0) {
+      activeSpot = null;
+    } else {
+      const next = { slot: shown[inUseIndex].slot, x: xs[inUseIndex], page: spoolPage };
+      if (previous && previous.page === spoolPage && previous.slot !== next.slot) {
+        glideHighlight(previous.x, next.x);
+      }
+      activeSpot = next;
+    }
 
     spoolPageMark.textContent = pages > 1 ? `${spoolPage + 1}/${pages}` : '';
   }
@@ -1507,7 +1727,7 @@
   function hitTargets() {
     const ids = ['printer-hit', 'spoolRow', 'cameraMonitor', 'layerBadge', 'firstLayerIndicator',
                  'wifiIndicator', 'elapsedBadge', 'remainingBadge', 'nozzleBadge', 'bedBadge',
-                 'statusBadge'];
+                 'chamberBadge', 'fanAux', 'fanChamber', 'amsStrip', 'statusBadge'];
     const nodes = ids.map((id) => document.getElementById(id));
     nodes.push(...svg.querySelectorAll('[id="cameraStand"]'));
     return nodes.filter(Boolean);
